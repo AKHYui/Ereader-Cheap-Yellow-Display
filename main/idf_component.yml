@@ -1,0 +1,5 @@
+dependencies:
+  idf:
+    version: ">=5.0"
+  bitbank2/jpegdec:
+    version: "^1.6.2"

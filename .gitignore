@@ -1,0 +1,20 @@
+# ESP-IDF 构建产物
+build/
+managed_components/
+sdkconfig
+sdkconfig.old
+dependencies.lock
+
+# 编辑器 / 系统
+.vscode/
+.idea/
+*.swp
+*~
+.DS_Store
+Thumbs.db
+
+# 临时与备份
+*.bak
+*.orig
+*.tmp
+*.log

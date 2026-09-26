@@ -1,0 +1,289 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>文件接收</title>
+<style>
+:root{--bg:#12141a;--card:#1c2028;--fg:#e8ecf2;--dim:#8b95a5;--acc:#3fbf5f;--err:#e05a5a}
+*{box-sizing:border-box}
+body{margin:0;padding:16px;background:var(--bg);color:var(--fg);
+     font:15px/1.5 -apple-system,"Segoe UI","Microsoft YaHei",sans-serif}
+h1{font-size:19px;margin:0 0 3px}
+.sub{color:var(--dim);font-size:13px}
+.card{background:var(--card);border-radius:10px;padding:14px;margin-bottom:12px}
+select,button{font:inherit;color:var(--fg);background:#262b35;border:1px solid #333a47;
+     border-radius:8px;padding:9px 12px}
+button{cursor:pointer}
+button.primary{background:var(--acc);color:#0b1a0e;border-color:var(--acc);font-weight:600}
+#drop{border:2px dashed #39414f;border-radius:12px;padding:24px;text-align:center;
+      color:var(--dim);margin-bottom:12px}
+#drop.on{border-color:var(--acc);color:var(--acc)}
+.row{display:flex;align-items:center;gap:10px;margin-bottom:10px;flex-wrap:wrap}
+label.chk{display:flex;align-items:center;gap:7px;color:var(--dim);font-size:14px;cursor:pointer}
+.bar{height:6px;background:#262b35;border-radius:3px;overflow:hidden;margin-top:6px}
+.bar>i{display:block;height:100%;width:0;background:var(--acc);transition:width .15s}
+.head{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:6px}
+ul{list-style:none;padding:0;margin:0;max-height:320px;overflow:auto}
+li{display:flex;justify-content:space-between;gap:12px;padding:7px 0;
+   border-bottom:1px solid #262b35;font-size:14px}
+li>b{font-weight:400;word-break:break-all}
+li>span{color:var(--dim);flex:0 0 auto;font-size:13px}
+.ok{color:var(--acc)}.err{color:var(--err)}
+</style>
+</head>
+<body>
+<h1>文件接收</h1>
+<div class="sub">CYD 电子书 · 传完可直接在板子的「图片」里翻看</div>
+
+<div class="card" style="margin-top:12px">
+  <div class="row">
+    <label>存到 <select id="dir"></select></label>
+    <button id="refresh">刷新</button>
+  </div>
+  <div class="row">
+    <label class="chk"><input type="checkbox" id="opt" checked>
+      图片自动优化（转 baseline + 缩到屏幕 2 倍）</label>
+  </div>
+  <div id="drop">
+    <div>把文件拖到这里</div>
+    <div style="margin-top:12px"><button class="primary" id="pick">选择文件</button></div>
+    <input type="file" id="file" multiple hidden>
+  </div>
+  <div class="bar"><i id="prog"></i></div>
+  <div class="sub" id="msg" style="margin-top:10px"></div>
+</div>
+
+<div class="card">
+  <div class="head"><b>板子上已有</b><span class="sub" id="cnt">…</span></div>
+  <ul id="list"></ul>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+
+/* 板子的图片区是 240x268。这里的尺寸算法必须与固件 pv_jpeg.c::fit_target()
+   和 tools/pv_prep_photos.py 完全一致 —— 算错了解码器就会掉到 1:1，
+   多解 4 倍像素（白花时间、还占内存）。 */
+const SCR_W = 240, IMG_H = 268;
+
+function fitTarget(w, h) {
+  if (w <= SCR_W && h <= IMG_H) return [w, h];          /* 小图不放大 */
+  if (w * IMG_H > h * SCR_W) return [SCR_W, Math.floor(h * SCR_W / w)];
+  return [Math.floor(w * IMG_H / h), IMG_H];
+}
+
+/* 缩到"显示目标的 2 倍"：板子就能走 1/2 降采样（解码器自带像素平均，
+   比显示层的抽取好看），同时体积小好几倍、传得快。 */
+function prepSize(w, h) {
+  const t = fitTarget(w, h), cw = t[0] * 2, ch = t[1] * 2;
+  let nw = w, nh = h;
+  if (w > cw || h > ch) {
+    const s = Math.min(cw / w, ch / h);
+    nw = Math.max(1, Math.round(w * s));
+    nh = Math.max(1, Math.round(h * s));
+  }
+  /* 抬到至少 2 倍目标（差 1 像素就会让板子掉到 1:1），但绝不放大过原图 */
+  return [Math.min(Math.max(nw, cw), w), Math.min(Math.max(nh, ch), h)];
+}
+
+function baseName(n) {
+  const i = n.lastIndexOf('.');
+  return (i > 0 ? n.slice(0, i) : n).replace(/[^\w\u4e00-\u9fa5.-]+/g, '_').slice(0, 60);
+}
+
+function fmtSize(n) {
+  return n < 1024 ? n + ' B'
+       : n < 1048576 ? (n / 1024).toFixed(1) + ' KB'
+       : (n / 1048576).toFixed(2) + ' MB';
+}
+
+/* 读 JPEG 的 SOF marker 判断是 baseline(0xC0) 还是渐进式(0xC2)。
+   渐进式在这个解码库下只有约 1/8 清晰度 —— 万一某个浏览器 toBlob 出的是
+   渐进式，要让用户看得见，而不是传完发现"怎么发虚"。 */
+async function jpegIsProgressive(blob) {
+  const b = new Uint8Array(await blob.slice(0, 65536).arrayBuffer());
+  if (b[0] !== 0xFF || b[1] !== 0xD8) return false;
+  let i = 2;
+  while (i + 3 < b.length) {
+    if (b[i] !== 0xFF) { i++; continue; }
+    const m = b[i + 1];
+    if (m === 0xD8 || m === 0x01 || (m >= 0xD0 && m <= 0xD7)) { i += 2; continue; }
+    const len = (b[i + 2] << 8) | b[i + 3];
+    if (m >= 0xC0 && m <= 0xCF && m !== 0xC4 && m !== 0xC8 && m !== 0xCC) return m === 0xC2;
+    i += 2 + len;
+  }
+  return false;
+}
+
+/* 用 canvas 重绘 —— toBlob('image/jpeg') 产出的是 baseline，这就是整个
+   "手机上选图直接传上去就清晰"的关键：转换发生在浏览器里，
+   完全不占板子的算力（板子只有解码器，没有编码器，转不了）。 */
+async function optimize(file) {
+  const bmp = await createImageBitmap(file, { imageOrientation: 'from-image' });
+  const [nw, nh] = prepSize(bmp.width, bmp.height);
+  const c = document.createElement('canvas');
+  c.width = nw; c.height = nh;
+  const g = c.getContext('2d');
+  g.imageSmoothingEnabled = true;
+  g.imageSmoothingQuality = 'high';
+  g.drawImage(bmp, 0, 0, nw, nh);
+  if (bmp.close) bmp.close();
+  const blob = await new Promise(r => c.toBlob(r, 'image/jpeg', 0.86));
+  if (!blob) throw new Error('canvas 编码失败');
+  return { blob, name: baseName(file.name) + '.jpg', w: nw, h: nh };
+}
+
+function send(blob, name, dir, onProg) {
+  return new Promise((res, rej) => {
+    const x = new XMLHttpRequest();
+    const q = '/upload?dir=' + encodeURIComponent(dir) + '&name=' + encodeURIComponent(name);
+    x.open('POST', q);
+    x.setRequestHeader('Content-Type', 'application/octet-stream');
+    x.upload.onprogress = e => onProg && onProg(e.loaded / e.total);
+    x.onload = () => {
+      if (x.status === 200) res(x.responseText || '');
+      else rej(new Error((x.responseText || '').trim() || ('HTTP ' + x.status)));
+    };
+    x.onerror = () => rej(new Error('连接中断'));
+    x.send(blob);
+  });
+}
+
+let busy = false;
+
+async function handle(files) {
+  if (busy) return;
+  const arr = [...files];
+  if (!arr.length) return;
+  busy = true;
+
+  const dir = $('dir').value;
+  const opt = $('opt').checked;
+  let okN = 0;
+
+  for (let i = 0; i < arr.length; i++) {
+    const f = arr[i];
+    const tag = arr.length > 1 ? `(${i + 1}/${arr.length}) ` : '';
+    $('msg').className = 'sub';
+    $('msg').textContent = tag + f.name + ' 处理中…';
+    try {
+      let blob = f, name = f.name, note = '';
+
+      if (opt && /^image\//.test(f.type) && f.type !== 'image/gif') {
+        try {
+          const o = await optimize(f);
+          blob = o.blob; name = o.name;
+          note = ` → ${o.w}x${o.h} ${fmtSize(blob.size)}`;
+          if (await jpegIsProgressive(blob)) {
+            $('msg').className = 'sub err';
+            $('msg').textContent = tag + '注意：浏览器编码出的是渐进式 JPEG，屏上可能发虚';
+          }
+        } catch (e) {
+          note = '（优化失败，按原文件传）';
+        }
+      }
+
+      $('msg').className = 'sub';
+      $('msg').textContent = tag + name + note + ' 上传中…';
+      await send(blob, name, dir, p => { $('prog').style.width = (p * 100) + '%'; });
+      $('prog').style.width = '0';
+      $('msg').className = 'sub ok';
+      $('msg').textContent = tag + name + note + '  上传完成';
+      okN++;
+    } catch (e) {
+      $('prog').style.width = '0';
+      $('msg').className = 'sub err';
+      $('msg').textContent = tag + f.name + '  失败：' + e.message;
+      busy = false;
+      loadList();
+      return;
+    }
+  }
+
+  if (arr.length > 1) {
+    $('msg').className = 'sub ok';
+    $('msg').textContent = `全部完成（${okN}/${arr.length}）`;
+  }
+  busy = false;
+  loadList();
+}
+
+async function loadDirs() {
+  try {
+    const j = await (await fetch('/api/dirs')).json();
+    const sel = $('dir'), cur = sel.value;
+    sel.innerHTML = '';
+    for (const d of j.dirs) {
+      const o = document.createElement('option');
+      o.value = d; o.textContent = '/' + d;
+      sel.appendChild(o);
+    }
+    /* 记住上次选的目录：往板子上放图一般固定存 images，放小说固定存 novels，
+     * 每次都重选一遍很烦。优先级：当前选中 > 上次记住的(仅当它还在) > images。 */
+    let last = '';
+    try { last = localStorage.getItem('pv_dir') || ''; } catch (e) { last = ''; }
+    if (j.dirs.includes(cur)) sel.value = cur;
+    else if (last && j.dirs.includes(last)) sel.value = last;
+    else if (j.dirs.includes('images')) sel.value = 'images';
+    sel.onchange = () => {
+      try { localStorage.setItem('pv_dir', sel.value); } catch (e) { /* 隐私模式：忽略 */ }
+      loadList();
+    };
+  } catch (e) {
+    $('msg').className = 'sub err';
+    $('msg').textContent = '拿不到目录列表：' + e.message;
+  }
+}
+
+async function loadList() {
+  try {
+    const dir = $('dir').value;
+    const j = await (await fetch('/api/list?dir=' + encodeURIComponent(dir))).json();
+    $('cnt').textContent = j.files.length + ' 个';
+    $('list').innerHTML = '';
+    for (const f of j.files) {
+      const li = document.createElement('li');
+      const b = document.createElement('b');
+      b.textContent = f.name;
+      const s = document.createElement('span');
+      s.textContent = fmtSize(f.size);
+      li.appendChild(b); li.appendChild(s);
+      $('list').appendChild(li);
+    }
+    if (!j.files.length) {
+      const li = document.createElement('li');
+      li.className = 'sub';
+      li.textContent = '（空）';
+      $('list').appendChild(li);
+    }
+  } catch (e) {
+    $('cnt').textContent = '读取失败';
+  }
+}
+
+$('pick').onclick = () => $('file').click();
+$('file').onchange = e => { handle(e.target.files); e.target.value = ''; };
+$('refresh').onclick = () => { loadDirs(); loadList(); };
+$('dir').onchange = loadList;
+
+const drop = $('drop');
+['dragenter', 'dragover'].forEach(t => drop.addEventListener(t, e => {
+  e.preventDefault(); drop.classList.add('on');
+}));
+['dragleave', 'drop'].forEach(t => drop.addEventListener(t, e => {
+  e.preventDefault(); drop.classList.remove('on');
+}));
+drop.addEventListener('drop', e => { if (e.dataTransfer.files) handle(e.dataTransfer.files); });
+/* 页面空白处也接受拖放，免得"拖歪了"变成浏览器打开文件 */
+window.addEventListener('dragover', e => e.preventDefault());
+window.addEventListener('drop', e => {
+  e.preventDefault();
+  if (e.target.closest && e.target.closest('#drop')) return;
+  if (e.dataTransfer.files.length) handle(e.dataTransfer.files);
+});
+
+loadDirs().then(loadList);
+</script>
+</body>
+</html>

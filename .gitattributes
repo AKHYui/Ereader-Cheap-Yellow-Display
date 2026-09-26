@@ -1,0 +1,10 @@
+# 源码统一 LF（避免 Windows 上的 autocrlf 把整个仓库变成 CRLF）
+* text=auto eol=lf
+
+# 二进制一律不转换 —— 字库、测试卡这类文件被当作文本处理会被改坏
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.bmp   binary
+*.bin   binary
+*.ico   binary
