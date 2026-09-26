@@ -208,18 +208,6 @@ idf.py -p COM9 flash monitor
 The app binary is `build/ereader.bin`; it can be flashed directly to `0x20000` (see the
 partition table below).
 
-#### Behind a restrictive network
-
-The component manager fetches over HTTPS from `components.espressif.com`. Give one build a proxy:
-
-```bash
-export HTTP_PROXY=http://127.0.0.1:8080
-export HTTPS_PROXY=http://127.0.0.1:8080
-idf.py build
-```
-
-Once the dependency is in `managed_components/`, builds work offline.
-
 #### Manual flashing (without idf.py)
 
 ```bash

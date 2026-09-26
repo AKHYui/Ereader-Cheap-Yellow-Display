@@ -197,18 +197,6 @@ idf.py -p COM9 flash monitor
 
 产物在 `build/ereader.bin`，可以直接把它烧到 `0x20000`（分区表见下）。
 
-#### 如果拉不到组件（国内网络）
-
-组件管理器走 HTTPS 拉 `components.espressif.com`。可以给一次构建设代理：
-
-```bash
-export HTTP_PROXY=http://127.0.0.1:8080
-export HTTPS_PROXY=http://127.0.0.1:8080
-idf.py build
-```
-
-拉到 `managed_components/` 之后就可以离线编译了。
-
 #### 手工烧录（不想用 idf.py 时）
 
 ```bash
