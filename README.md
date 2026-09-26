@@ -1,104 +1,117 @@
-# Ereader · ESP32 黄板多功能手持设备
+**English** · [简体中文](README.zh-CN.md)
 
-基于 **ESP32-2432S028R（Cheap Yellow Display / CYD）** 的固件：看小说、翻图片、
-网页传文件、6 位开机密码、PWM 亮度调节。
+# Ereader · ESP32 Cheap Yellow Display Handheld
 
-界面是一套自研的**行带流式渲染器**：全屏只有一条 240×64 的 DMA 行带，所有界面
-都是"逐行合成"再推屏。这块板子没有 PSRAM、可用的最大连续内存只有约 80KB，
-而"边解码边推屏"是它显示 1080P 图片的唯一可行路径（见 [实现要点](#实现要点)）。
+Firmware for the **ESP32-2432S028R (Cheap Yellow Display / CYD)**: read TXT novels, browse
+images, transfer files over Wi-Fi, 6-digit boot password, PWM brightness control.
 
-![主菜单](screenshots/01-main.png)
+The entire UI is a hand-written **row-band streaming renderer**. There is only one 240×64 DMA
+band for the whole screen, and every screen is composed row by row before being pushed to the
+panel. This board has no PSRAM and its largest contiguous free block is only ~80 KB, so
+"decode and push at the same time" is the only viable way to show a 1080p image here
+(see [Implementation notes](#implementation-notes)).
 
----
-
-## 功能
-
-| 模块 | 能力 |
-|---|---|
-| **阅读** | 扫描 `/sdcard/novels` 下的 TXT；自动识别 UTF-8 / GBK / GB2312 与 BOM；自动分页、过滤空行；黑底白字；**书签**（存页号，重启后仍可跳回） |
-| **图片** | 浏览 `/sdcard/images` 下的 JPEG / BMP；等比适配不拉伸；1080P 可用；**删除**当前图片（带二次确认） |
-| **网络** | 连接 WLAN（扫描、密码键盘、状态显示）；**AP 模式**（板子自己开热点，没有路由器也能传文件）；浏览器上传网页（可选目录 + 文件列表） |
-| **设置** | **设备安全**：6 位数字开机密码（开启后每次开机需输入）；**亮度调节**：1%~100% 无级（PWM）；忘记网络 |
-| **文件结构** | 插卡自动创建 `images` / `novels` 目录，空卡也能直接用 |
-
-## 效果图
-
-> 以下界面图按固件里的版面常量渲染，与实体屏上的版式一致
-> （字体为系统字体，屏上用的是自带的点阵字库）。
-
-### 阅读
-
-![小说列表 / 阅读页 / 书签弹窗 / 保存反馈](screenshots/02-reader.png)
-
-### 图片
-
-![图片查看器与删除确认](screenshots/03-images.png)
-
-### 网络
-
-![网络菜单 / WLAN / AP 模式 / 文件接收](screenshots/04-network.png)
-
-### 设置
-
-![设置 / 设备安全 / 开机密码键盘 / 亮度](screenshots/05-settings.png)
+![Main menu](screenshots/01-main.png)
 
 ---
 
-## 硬件
+## Features
 
-| 项 | 值 |
+| Module | Capability |
 |---|---|
-| 开发板 | ESP32-2432S028R（CYD），2.8 寸 240×320 电阻触摸屏 |
-| 芯片 | ESP32-D0WD-V3 双核 240MHz |
-| Flash | 4MB（单 `factory` 分区，app 约 3.0MB，分区余量约 21%） |
-| PSRAM | **无** |
-| 存储 | microSD 卡（SPI，可选；没有卡也能开机） |
+| **Reader** | Scans `.txt` files under `/sdcard/novels`; auto-detects UTF-8 / GBK / GB2312, with or without BOM; automatic pagination and blank-line filtering; white text on black; **bookmarks** (the page number survives a reboot) |
+| **Images** | Browsing of JPEG / BMP under `/sdcard/images`; aspect-fit, never stretched; 1080p images work; **delete** the current image (with confirmation) |
+| **Network** | Join a WLAN (scan, on-screen password keyboard, status); **AP mode** — the board hosts its own hotspot, so files can be transferred with no router at all; browser upload page (target-directory picker + file list) |
+| **Settings** | **Device security**: 6-digit boot password (asked on every boot once enabled); **brightness**: 1–100% via PWM; forget network |
+| **Filesystem** | `images` / `novels` are created automatically when a card is inserted — a blank card works immediately |
 
-> ⚠️ **屏幕驱动有两种批次**：单 Micro-USB 口的是 **ILI9341**，双口（Micro-USB + USB-C）
-> 的是 **ST7789**。本项目按 **ST7789 + 不反色 + BGR** 配置（`main/drivers/board_pins.h`）。
-> 如果你的是 ILI9341 版，需要改这个文件里的面板参数。
+## Screenshots
 
-### 引脚
+> These renders are generated from the same layout constants the firmware uses, so the layout
+> matches the real panel. The fonts shown here are system fonts; the device draws its own
+> bitmap fonts.
 
-| 功能 | 引脚 |
+### Reader
+
+![Novel list / reading page / bookmark dialog / save confirmation](screenshots/02-reader.png)
+
+### Images
+
+![Image viewer and delete confirmation](screenshots/03-images.png)
+
+### Network
+
+![Network menu / WLAN / AP mode / file receive](screenshots/04-network.png)
+
+### Settings
+
+![Settings / device security / password keypad / brightness](screenshots/05-settings.png)
+
+---
+
+## Hardware
+
+| Item | Value |
+|---|---|
+| Board | ESP32-2432S028R (CYD), 2.8" 240×320 resistive touch |
+| SoC | ESP32-D0WD-V3, dual-core 240 MHz |
+| Flash | 4 MB (single `factory` partition; app ≈ 3.0 MB, ~21% of the partition left) |
+| PSRAM | **none** |
+| Storage | microSD card over SPI (optional — the device boots without one) |
+
+> ⚠️ **There are two panel variants.** Boards with a single Micro-USB port use an **ILI9341**;
+> boards with two ports (Micro-USB + USB-C) use an **ST7789**. This project targets
+> **ST7789 + no inversion + BGR** (see `main/drivers/board_pins.h`). If you have the ILI9341
+> version you must change the panel parameters in that file.
+
+### Pinout
+
+| Function | Pins |
 |---|---|
 | TFT CS / DC / MOSI / MISO / SCLK / BL | 15 / 2 / 13 / 12 / 14 / **21** |
-| 触摸 XPT2046 CS / MOSI / MISO / CLK / IRQ | 33 / 32 / 39 / 25 / 36 |
-| SD 卡 CS / MOSI / MISO / SCLK | 5 / 23 / 19 / 18 |
-| 板载 RGB LED | R=4 G=16 B=17 |
+| Touch XPT2046 CS / MOSI / MISO / CLK / IRQ | 33 / 32 / 39 / 25 / 36 |
+| microSD CS / MOSI / MISO / SCLK | 5 / 23 / 19 / 18 |
+| On-board RGB LED | R=4 G=16 B=17 |
 
 ---
 
-## 编译与烧录
+## Build and flash
 
-### 环境
+### Prebuilt firmware
 
-- **ESP-IDF v5.5**（其他 5.x 一般也可以）
+If you would rather not build it yourself, grab `ereader-fw-*.zip` from
+[Releases](../../releases). It contains a merged flash image, the individual binaries, and
+one-click flashing scripts (`flash.bat` / `flash.sh`) with instructions in `FLASH.txt`.
+
+### Requirements
+
+- **ESP-IDF v5.5** (other 5.x releases generally work)
 - Python 3.8+
-- 首次编译**需要联网**：组件管理器要拉一个依赖 —— `bitbank2/jpegdec ^1.6.2`
-  （JPEG 解码，见 `main/idf_component.yml`）
+- The first build **needs network access**: the component manager downloads one dependency,
+  `bitbank2/jpegdec ^1.6.2` (JPEG decoder — see `main/idf_component.yml`)
 
-### 步骤
+### Steps
 
 ```bash
-# 0) 装好 ESP-IDF 后激活环境
+# 0) activate the ESP-IDF environment
 . $IDF_PATH/export.sh
 
-# 1) 目标芯片（sdkconfig.defaults 里已固定为 esp32，这一步通常可省）
+# 1) target chip (already pinned to esp32 in sdkconfig.defaults, usually not needed)
 idf.py set-target esp32
 
-# 2) 编译
+# 2) build
 idf.py build
 
-# 3) 烧录并看串口日志（Windows 下把 COM9 换成你的串口）
+# 3) flash and watch the serial log (replace COM9 with your own port)
 idf.py -p COM9 flash monitor
 ```
 
-产物在 `build/ereader.bin`，可以直接把它烧到 `0x20000`（分区表见下）。
+The app binary is `build/ereader.bin`; it can be flashed directly to `0x20000` (see the
+partition table below).
 
-### 如果拉不到组件（国内网络）
+### Behind a restrictive network
 
-组件管理器走 HTTPS 拉 `components.espressif.com`。可以给一次构建设代理：
+The component manager fetches over HTTPS from `components.espressif.com`. Give one build a proxy:
 
 ```bash
 export HTTP_PROXY=http://127.0.0.1:8080
@@ -106,9 +119,9 @@ export HTTPS_PROXY=http://127.0.0.1:8080
 idf.py build
 ```
 
-拉到 `managed_components/` 之后就可以离线编译了。
+Once the dependency is in `managed_components/`, builds work offline.
 
-### 手工烧录（不想用 idf.py 时）
+### Manual flashing (without idf.py)
 
 ```bash
 esptool.py --chip esp32 --port COM9 --baud 460800 \
@@ -120,127 +133,140 @@ esptool.py --chip esp32 --port COM9 --baud 460800 \
   0x20000 build/ereader.bin
 ```
 
-### 分区表
+### Partition table
 
-| 名称 | 类型 | 偏移 | 大小 |
+| Name | Type | Offset | Size |
 |---|---|---|---|
-| nvs | data/nvs | 0x9000 | 20KB |
-| otadata | data/ota | 0xE000 | 8KB |
-| phy_init | data/phy | 0x10000 | 4KB |
-| **factory** | app | **0x20000** | 3.81MB |
+| nvs | data/nvs | 0x9000 | 20 KB |
+| otadata | data/ota | 0xE000 | 8 KB |
+| phy_init | data/phy | 0x10000 | 4 KB |
+| **factory** | app | **0x20000** | 3.81 MB |
 
 ---
 
-## 使用
+## Usage
 
-### 1. 准备 SD 卡
+### 1. Prepare the SD card
 
-格式化成 **FAT32**，插进板子即可。开机时固件会自动建好这两个目录：
+Format it as **FAT32** and insert it. On boot the firmware creates these two directories:
 
 ```
-/sdcard/images    ← 放图片（jpg / jpeg / bmp，不递归子目录）
-/sdcard/novels    ← 放小说（txt）
+/sdcard/images    <- images (jpg / jpeg / bmp; subdirectories are not scanned)
+/sdcard/novels    <- novels (txt)
 ```
 
-### 2. 传文件
+### 2. Transfer files
 
-有两种方式，按手头有没有路由器选：
+Two ways, depending on whether you have a router nearby.
 
-**有路由器**：`网络 → WLAN` 连上热点，记下屏幕上的 IP；同一网络下用电脑/手机浏览器
-打开这个 IP。
+**With a router** — `Network → WLAN`, join your hotspot, note the IP shown on screen, then open
+that IP in a browser on a computer or phone on the same network.
 
-**没有路由器**：`网络 → AP模式`，板子自己开一个热点（屏幕会同时显示
-热点名、密码和地址，默认密码 `12345678`），手机连上后浏览器打开 `192.168.4.1`。
+**Without a router** — `Network → AP mode`. The board starts its own hotspot (the screen shows
+the SSID, the password and the address together; default password `12345678`). Join it from your
+phone and open `192.168.4.1`.
 
-两种情况都会看到同一个上传页面：选目录、选文件、上传。**图片会在浏览器端先转成
-基线 JPEG 并缩到屏幕的 2 倍尺寸再传** —— 手机原图直接传会被解码器降成 1/8 分辨率
-（板子只有解码器、没有编码器，这一步只能在浏览器里做）。
+Either way you get the same upload page: pick a directory, pick files, upload. **Images are
+converted to baseline JPEG and downscaled to 2× the screen size in the browser before being
+uploaded** — a phone photo uploaded as-is would be decoded at 1/8 resolution, and since the board
+has only a decoder (no encoder), that conversion can only happen on the browser side.
 
-### 3. 开机密码
+### 3. Boot password
 
-`设置 → 设备安全 → 开启密码`，输入两遍 6 位数字。开启后每次开机都会先弹锁屏键盘。
-关闭密码不需要再验证（能进设置页说明已经过了一道）。
+`Settings → Device security → Enable password`, then enter a 6-digit PIN twice. Once enabled, a
+lock keypad appears on every boot. Disabling it does not require the old PIN (reaching the
+settings page already means you passed the boot check).
 
 ---
 
-## 目录结构
+## Repository layout
 
 ```
 .
-├── CMakeLists.txt              顶层工程定义（目标芯片 esp32）
-├── partitions.csv              分区表（单 factory 区，app @ 0x20000）
-├── sdkconfig.defaults          默认配置（Flash/FreeRTOS/FATFS 等）
-├── screenshots/                README 用的界面图
+├── CMakeLists.txt              top-level project (target chip esp32)
+├── partitions.csv              partition table (single factory partition, app @ 0x20000)
+├── sdkconfig.defaults          default config (flash / FreeRTOS / FATFS ...)
+├── screenshots/                images used by this README
 └── main/
-    ├── main.c                  启动入口 + 界面外壳（主菜单 → 分发 → 回主菜单）
-    ├── drivers/                显示 / 触摸 / SD 卡 / 板级定义
-    ├── nui/                    界面外壳：主菜单、设置、设备安全、公共绘制层与字库
-    ├── picview/                图片查看器（解码 + 行带显示层 + 触摸 + 扫描）
-    ├── reader/                 阅读功能（TXT 分页、16px 字库、按钮条、书签）
-    ├── net/                    网络（WiFi 封装、HTTP 上传、AP 模式、各页面）
-    └── book/                   GBK 码表与文件名编码转换
+    ├── main.c                  entry point + shell (main menu -> dispatch -> back to menu)
+    ├── drivers/                display / touch / SD card / board definitions
+    ├── nui/                    UI shell: main menu, settings, device security, drawing layer, fonts
+    ├── picview/                image viewer (decoder + row-band display + touch + scanning)
+    ├── reader/                 reader (TXT pagination, 16px fonts, button bar, bookmarks)
+    ├── net/                    networking (Wi-Fi wrapper, HTTP upload, AP mode, screens)
+    └── book/                   GBK tables and filename encoding conversion
 ```
 
 ---
 
-## 实现要点
+## Implementation notes
 
-以下是几条决定性的设计约束：
+A few decisions that shape everything else:
 
-**行带流式渲染**
-全模块只有一条 240×64 的 DMA 行带（30,720 字节）。所有界面都是"逐行合成"——
-从上到下扫一遍屏幕，每一行把落在该行的所有形状依次叠上去。**行带只向前滚，
-所以绘制必须按 y 递增**；反过来画的部分会被静默丢弃。
+**Row-band streaming render**
+Only one 240×64 DMA band (30,720 bytes) exists for the whole module. Every screen is composed row
+by row: scan the panel from top to bottom and, for each row, lay down every shape that falls on
+it. **The band only advances forward, so drawing must proceed in increasing y** — anything drawn
+"backwards" is silently dropped.
 
-**颜色链路是三个独立环节**
-字节序（每像素两字节对调）、BGR 元素顺序、面板反色，各自独立、症状不同，
-而且**只有实体屏能验证**（抓屏抓的是对调前的缓冲）。本项目的定案是
-`swap=1 / BGR=1 / invert=0`，对调发生在 `pv_disp.c::flush_band()` 这唯一一处。
+**The color path has three independent stages**
+Byte order (swapping the two bytes of each pixel), BGR element order, and panel inversion are
+independent, produce different symptoms, and **can only be verified on a real panel** (a captured
+frame buffer is taken before the swap). The values settled on here are
+`swap=0 / mirror_x=1 / BGR=1 / invert=0`, and the byte swap happens in exactly one place:
+`pv_disp.c::flush_band()`.
 
-**两级点阵字库**
-正文用 16px：主库 4bpp（ASCII + GB2312 + 符号），扩展库 2bpp（GBK 扩展区）。
-两级位深不同，所以渲染时必须用字形结构体里的 `row_bytes/bpp`，不能用全局常量。
-界面另有一套 32px 字库（只有界面真正用到的那些字）。
+**Two-level bitmap fonts**
+Body text uses 16px: a main 4bpp set (ASCII + GB2312 + symbols) and an extension 2bpp set (GBK
+extended area). The two levels have different bit depths, so rendering must use the `row_bytes`
+and `bpp` stored in the glyph struct — never a global constant. The UI has its own 32px font set
+(only the characters the UI actually uses).
 
-**图片重采样用面积平均**
-源尺寸和目标尺寸一般不是整数倍，最近邻会丢掉约 26% 的行列并留下锯齿。
-这里把映射到同一个目标像素的源像素求平均，等价于一次盒式滤波。
+**Image resampling uses area averaging**
+Source and target sizes are rarely integer multiples, and nearest-neighbour would drop about 26%
+of rows and columns and leave visible aliasing. Here all source pixels mapping to one target
+pixel are averaged, which is equivalent to a single box filter.
 
-**触摸判据用压力值，不是坐标范围**
-XPT2046 悬空时 X/Y 会读到 808/1812 这类值，**恰好落在标定范围之内**，
-所以"范围检查"挡不住。这里用 Z 压力值 + 双门限迟滞判按压，
-并且**确认按下之后再等两拍**才建立坐标（手指刚接触那几拍的坐标不可信）。
+**Touch is detected by pressure, not by coordinate range**
+When an XPT2046 is left floating, X/Y read values such as 808/1812 that **fall inside the
+calibrated range**, so range checks do not catch them. Press detection uses the Z pressure value
+with two thresholds and hysteresis, and coordinates are latched only **two ticks after a press is
+confirmed** (the first few ticks of a touch are not trustworthy).
 
-**名字/路径缓冲按 FATFS 上限定**
-FATFS 文件名上限 255 字节。早先用 64 字节定长缓冲存文件名，遇到更长的名字
-会被 `strncpy` **静默截断**，产出一个磁盘上不存在的"幽灵名字" ——
-症状是列表里看得见、点开打不开、删除也删不掉。现在改用名字池 + 明确拒绝
-（装不下就跳过并告警），路径拼装也做了截断检测。
-
----
-
-## 已知限制
-
-- **渐进式 JPEG 只能解出约 1/8 分辨率的预览**（解码库的行为，不是配置问题）。
-  要清晰就用画图工具把图片另存为**基线（baseline）** JPEG。
-- 无 PSRAM，可用最大连续内存约 80KB，图片尺寸/数量很大时可能失败。
-- 电阻屏是单点触摸，**只支持点按**：没有滑动、长按、双指。
-- 触摸与面板参数是按本板实测定的；换板/换屏可能需要重新标定，面板参数见
-  `main/drivers/board_pins.h`（也可用 NVS `panelcfg` 覆盖，见 `lcd_cfg_load()`）。
+**Name and path buffers are sized to the FATFS limits**
+FATFS allows filenames up to 255 bytes. Storing them in a 64-byte fixed buffer meant longer names
+were **silently truncated by `strncpy`**, producing a "ghost name" that does not exist on disk —
+the symptom being an entry that is listed but can neither be opened nor deleted. The code now uses
+a name pool and refuses overflow explicitly (skip and warn), and path assembly detects truncation
+as well.
 
 ---
 
-## 许可
+## Known limitations
 
-本项目采用 **PolyForm Noncommercial License 1.0.0**（全文见 [LICENSE](LICENSE)）。
+- **Progressive JPEGs can only be decoded at about 1/8 resolution** (behaviour of the decoding
+  library, not a configuration issue). For sharp images, re-save them as **baseline** JPEG.
+- No PSRAM: the largest contiguous free block is ~80 KB, so very large or very numerous images
+  may fail.
+- The panel is a single-touch resistive screen, so **only taps are supported** — no swiping, no
+  long press, no pinch.
+- Touch and panel parameters were measured on this specific board; a different board or panel may
+  need recalibration. Panel parameters live in `main/drivers/board_pins.h` (they can also be
+  overridden through the NVS namespace `panelcfg`, see `lcd_cfg_load()`).
+
+---
+
+## License
+
+Released under the **PolyForm Noncommercial License 1.0.0** (full text in [LICENSE](LICENSE)).
 
 | | |
 |---|---|
-| ✅ 允许 | 个人学习、研究、实验、业余项目、私人娱乐等**非商业目的**的使用、修改与分发 |
-| ✅ 允许 | 慈善机构、教育机构、公共研究机构、公共安全/卫生机构、环保组织、政府机构使用 |
-| ❌ 不允许 | 任何**商业用途**（含公司内部商业项目）—— 商用须事先取得作者书面授权 |
+| ✅ Permitted | Use, modification and distribution for **noncommercial purposes**: personal study, research, experiments, hobby projects, private entertainment |
+| ✅ Permitted | Use by charitable organisations, educational institutions, public research bodies, public safety / health organisations, environmental organisations and government institutions |
+| ❌ Not permitted | Any **commercial use** (including internal commercial projects at a company) — commercial use requires prior written permission from the author |
 
-本期软件与许可者信息：
+Licensor and software information:
 
 ```
 Licensor:        AKHYui
@@ -248,25 +274,27 @@ Software:        Ereader-Cheap-Yellow-Display
 Required Notice: Copyright 2026 AKHYui
 ```
 
-> ⚠️ 需要说明的是：**禁止商用本身不符合开源（Open Source）的定义**，
-> 所以这是一份 **source-available（源码可见）** 授权，而不是 OSI 认可的开源许可证。
-> 它适合"代码公开给人看、给人学，但不想被拿去卖"的场景。如需商用请开 Issue 联系。
+> ⚠️ Note that **forbidding commercial use does not meet the Open Source definition**, so this is a
+> **source-available** licence rather than an OSI-approved open source licence. It fits the case of
+> "the code is public so people can read and learn from it, but it should not be sold". For
+> commercial use, please open an issue.
 
-### 第三方依赖
+### Third-party dependencies
 
-以下依赖在**编译时**由 ESP-IDF 组件管理器下载，**不包含在本仓库内**，
-遵循其原始许可，不受本项目许可影响：
+The dependency below is downloaded **at build time** by the ESP-IDF component manager. It is **not
+included in this repository** and remains under its own licence, unaffected by this project's licence:
 
-| 依赖 | 用途 | 许可 |
+| Dependency | Purpose | Licence |
 |---|---|---|
-| `bitbank2/jpegdec` | JPEG 解码（含 1/2、1/4、1/8 硬件降采样） | Apache-2.0 |
+| `bitbank2/jpegdec` | JPEG decoding (with 1/2, 1/4 and 1/8 hardware downscaling) | Apache-2.0 |
 
-### 关于字库
+### About the fonts
 
-仓库里的点阵字库（`main/reader/rd_font16*.bin`、`main/nui/nui_glyphs.c`、
-`main/nui/nui_ascii.c`）是**由 Windows 系统字体渲染生成的位图数据**，
-不是字体文件本身。个人使用无碍；**若要用于商业场景，请自行确认相应字体的授权条款。**
+The bitmap fonts in this repository (`main/reader/rd_font16*.bin`, `main/nui/nui_glyphs.c`,
+`main/nui/nui_ascii.c`) are **bitmap data rendered from Windows system fonts**, not the font files
+themselves. Personal use is fine; **for commercial use, please verify the licensing terms of the
+relevant fonts yourself.**
 
-## 致谢
+## Credits
 
-本代码由作者与DeepSeek-V4.1-Flash协作完成。
+Written by the author in collaboration with DeepSeek-V4.1-Flash.
