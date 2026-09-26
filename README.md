@@ -11,6 +11,10 @@ panel. This board has no PSRAM and its largest contiguous free block is only ~80
 "decode and push at the same time" is the only viable way to show a 1080p image here
 (see [Implementation notes](#implementation-notes)).
 
+> **Just want to flash it and use it?** A prebuilt firmware zip is attached to every
+> [Release](../../releases) — no toolchain, no code changes. Jump to
+> [Prebuilt firmware](#prebuilt-firmware).
+
 ![Main menu](screenshots/01-main.png)
 
 ---
@@ -79,18 +83,113 @@ panel. This board has no PSRAM and its largest contiguous free block is only ~80
 
 ### Prebuilt firmware
 
-If you would rather not build it yourself, grab `ereader-fw-*.zip` from
-[Releases](../../releases). It contains a merged flash image, the individual binaries, and
-one-click flashing scripts (`flash.bat` / `flash.sh`) with instructions in `FLASH.txt`.
+Every [Release](../../releases) ships an `ereader-fw-<version>.zip` that can be flashed as-is.
+**You do not need ESP-IDF, a toolchain, or any code change** — the zip contains the complete
+flash image, the individual partition binaries, one-click flashing scripts, and a `FLASH.txt`
+with the same instructions in English and Chinese.
 
-### Requirements
+**What you need**
+
+| | |
+|---|---|
+| The board | ESP32-2432S028R (CYD). This release targets the **ST7789** panel (the two-USB-port batch) — see the warning under [Hardware](#hardware) |
+| A USB **data** cable | charge-only cables do not work |
+| CH340 driver | Windows only; Linux and macOS usually have it already |
+| esptool | `pip install esptool` (needs Python 3) |
+| A microSD card | optional, but almost every feature needs one — format it as FAT32 |
+
+**Steps**
+
+1. **Download and unzip** `ereader-fw-<version>.zip` from the Releases page:
+
+   ```
+   ereader-fw-<version>/
+   ├── ereader-full.bin       complete image   -> flash at 0x0
+   ├── ereader.bin            app only         -> flash at 0x20000
+   ├── bootloader.bin         -> 0x1000
+   ├── partition-table.bin    -> 0x8000
+   ├── ota_data_initial.bin   -> 0xe000
+   ├── flash.bat / flash.sh   one-click scripts
+   ├── SHA256SUMS.txt         checksums
+   └── FLASH.txt              instructions (English + Chinese)
+   ```
+
+2. **Plug the board in** with a data cable and find its serial port:
+   - Windows — Device Manager → *Ports (COM & LPT)*, e.g. `COM3`
+   - Linux — `/dev/ttyUSB0` (or `/dev/ttyACM0`)
+   - macOS — `/dev/tty.usbserial-*`
+
+3. **Flash it.** One command, nothing to edit:
+
+   ```bat
+   :: Windows
+   flash.bat COM3
+   ```
+
+   ```bash
+   # Linux / macOS
+   ./flash.sh /dev/ttyUSB0
+   ```
+
+   Or by hand:
+
+   ```bash
+   esptool.py --chip esp32 --port COM3 --baud 460800 \
+     --before default_reset --after hard_reset write_flash \
+     --flash_mode dio --flash_size 4MB --flash_freq 40m \
+     0x0 ereader-full.bin
+   ```
+
+   The board resets itself and boots straight into the main menu — **there is no button to hold**
+   and no download mode to enter by hand.
+
+   > ⚠️ `ereader-full.bin` starts at `0x0` and the gaps are filled with `0xFF`, so flashing it
+   > also overwrites the NVS partition at `0x9000` — that is, saved Wi-Fi credentials, the boot
+   > password and the reading bookmark. That is exactly what you want on a first install. To
+   > **upgrade** while keeping your settings, flash only `ereader.bin` to `0x20000` instead
+   > (the bootloader and the partition table do not change between releases):
+   >
+   > ```bash
+   > esptool.py --chip esp32 --port COM3 --baud 460800 \
+   >   --before default_reset --after hard_reset write_flash \
+   >   --flash_mode dio --flash_size 4MB --flash_freq 40m \
+   >   0x20000 ereader.bin
+   > ```
+
+4. **Optionally verify the download** against `SHA256SUMS.txt` in the zip:
+
+   ```bash
+   sha256sum -c SHA256SUMS.txt                    # Linux / macOS
+   certutil -hashfile ereader-full.bin SHA256     # Windows
+   ```
+
+5. **Insert a FAT32 microSD card.** On boot the firmware creates `/sdcard/images` and
+   `/sdcard/novels` by itself, so a blank card is fine. Either copy `.jpg` / `.bmp` and `.txt`
+   files onto it directly, or use the board's own upload page — see
+   [Transfer files](#2-transfer-files).
+
+6. **Use it from the main menu**: READER / IMAGES / NETWORK / SETTINGS. Nothing needs to be
+   pre-created and no configuration file has to be written.
+
+**If something goes wrong**
+
+| Symptom | What to do |
+|---|---|
+| `No serial data received` | Just run the command again. This board's USB-serial bridge occasionally misses the first reset. Don't unplug or rewire anything. |
+| The port is not in the list | Install the CH340 driver on Windows, and make sure the cable is a data cable rather than a charge-only one. |
+| The screen stays white | The panel is probably a different batch — this release is built for ST7789 (two USB ports). See the warning under [Hardware](#hardware); an ILI9341 board needs a source change. |
+| Colours look wrong (blue appears orange) | Panel batch difference. The parameters live in `main/drivers/board_pins.h` and, unlike a normal upgrade, this does need a rebuild. |
+
+### Build from source
+
+#### Requirements
 
 - **ESP-IDF v5.5** (other 5.x releases generally work)
 - Python 3.8+
 - The first build **needs network access**: the component manager downloads one dependency,
   `bitbank2/jpegdec ^1.6.2` (JPEG decoder — see `main/idf_component.yml`)
 
-### Steps
+#### Steps
 
 ```bash
 # 0) activate the ESP-IDF environment
@@ -109,7 +208,7 @@ idf.py -p COM9 flash monitor
 The app binary is `build/ereader.bin`; it can be flashed directly to `0x20000` (see the
 partition table below).
 
-### Behind a restrictive network
+#### Behind a restrictive network
 
 The component manager fetches over HTTPS from `components.espressif.com`. Give one build a proxy:
 
@@ -121,7 +220,7 @@ idf.py build
 
 Once the dependency is in `managed_components/`, builds work offline.
 
-### Manual flashing (without idf.py)
+#### Manual flashing (without idf.py)
 
 ```bash
 esptool.py --chip esp32 --port COM9 --baud 460800 \
@@ -133,7 +232,7 @@ esptool.py --chip esp32 --port COM9 --baud 460800 \
   0x20000 build/ereader.bin
 ```
 
-### Partition table
+#### Partition table
 
 | Name | Type | Offset | Size |
 |---|---|---|---|

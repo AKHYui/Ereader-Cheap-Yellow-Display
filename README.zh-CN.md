@@ -9,6 +9,9 @@
 都是"逐行合成"再推屏。这块板子没有 PSRAM、可用的最大连续内存只有约 80KB，
 而"边解码边推屏"是它显示 1080P 图片的唯一可行路径（见 [实现要点](#实现要点)）。
 
+> **只想烧个成品直接用？** 每个 [Release](../../releases) 都附了固件包 ——
+> 不用装工具链、不用改代码。直接看[直接下载成品固件](#直接下载成品固件)。
+
 ![主菜单](screenshots/01-main.png)
 
 ---
@@ -73,20 +76,110 @@
 
 ## 编译与烧录
 
-### 直接下载固件
+### 直接下载成品固件
 
-不想自己编译的话，到 [Releases](../../releases) 下载 `ereader-fw-*.zip`，
-里面有一个完整合并镜像、四个单独的分区文件，以及一键烧录脚本
-（`flash.bat` / `flash.sh`），用法写在 `FLASH.txt` 里。
+**不用编译、不用改代码。**每个 [Release](../../releases) 都附了一个 `ereader-fw-<版本>.zip`，**开箱即用**：
+不需要装 ESP-IDF、不需要编译工具链、**一行代码都不用改**。包里是完整的烧录镜像、
+四个单独的分区文件、一键烧录脚本，以及一份中英双语的 `FLASH.txt`（内容与本节相同）。
 
-### 环境
+**需要准备什么**
+
+| | |
+|---|---|
+| 开发板 | ESP32-2432S028R（CYD）。本发布版针对 **ST7789** 屏（双 USB 口那批）—— 见[硬件](#硬件)下的提醒 |
+| 一根 USB **数据线** | 只能充电的线不行 |
+| CH340 驱动 | 仅 Windows 需要；Linux / macOS 一般已自带 |
+| esptool | `pip install esptool`（需要 Python 3） |
+| 一张 microSD 卡 | 可选，但几乎所有功能都要用 —— 格式化成 FAT32 |
+
+**步骤**
+
+1. **下载并解压** Releases 页面上的 `ereader-fw-<版本>.zip`：
+
+   ```
+   ereader-fw-<版本>/
+   ├── ereader-full.bin       完整镜像   → 烧 0x0
+   ├── ereader.bin            仅应用     → 烧 0x20000
+   ├── bootloader.bin         → 0x1000
+   ├── partition-table.bin    → 0x8000
+   ├── ota_data_initial.bin   → 0xe000
+   ├── flash.bat / flash.sh   一键烧录脚本
+   ├── SHA256SUMS.txt         校验和
+   └── FLASH.txt              中英双语说明
+   ```
+
+2. **用数据线把板子插上电脑**，找到它的串口：
+   - Windows —— 设备管理器 → *端口 (COM 和 LPT)*，例如 `COM3`
+   - Linux —— `/dev/ttyUSB0`（或 `/dev/ttyACM0`）
+   - macOS —— `/dev/tty.usbserial-*`
+
+3. **烧录。**一条命令，不用改任何东西：
+
+   ```bat
+   :: Windows
+   flash.bat COM3
+   ```
+
+   ```bash
+   # Linux / macOS
+   ./flash.sh /dev/ttyUSB0
+   ```
+
+   或者手工执行：
+
+   ```bash
+   esptool.py --chip esp32 --port COM3 --baud 460800 \
+     --before default_reset --after hard_reset write_flash \
+     --flash_mode dio --flash_size 4MB --flash_freq 40m \
+     0x0 ereader-full.bin
+   ```
+
+   烧完板子会自己复位并直接进主菜单 —— **不需要按任何按键**，也不用手工进下载模式。
+
+   > ⚠️ `ereader-full.bin` 从 `0x0` 起址、空白用 `0xFF` 填充，所以烧它会一并覆盖
+   > `0x9000` 的 NVS 分区 —— 也就是已保存的 WiFi 凭据、开机密码、阅读书签。
+   > 首次安装这正是想要的效果。如果是**升级**、想保住已有设置，只烧
+   > `ereader.bin` 到 `0x20000` 即可（本工程各版本之间 bootloader 与分区表没有变化）：
+   >
+   > ```bash
+   > esptool.py --chip esp32 --port COM3 --baud 460800 \
+   >   --before default_reset --after hard_reset write_flash \
+   >   --flash_mode dio --flash_size 4MB --flash_freq 40m \
+   >   0x20000 ereader.bin
+   > ```
+
+4. **（可选）校验下载是否完整**，对照包里的 `SHA256SUMS.txt`：
+
+   ```bash
+   sha256sum -c SHA256SUMS.txt                    # Linux / macOS
+   certutil -hashfile ereader-full.bin SHA256     # Windows
+   ```
+
+5. **插一张 FAT32 格式的 microSD 卡。**开机时固件会自己创建 `/sdcard/images` 和
+   `/sdcard/novels`，所以空卡直接用就行。图片和 txt 可以拷进去，也可以用板子自己的
+   上传网页 —— 见[传文件](#2-传文件)。
+
+6. **从主菜单开始用**：阅读 / 图片 / 网络 / 设置。不需要预先建目录，也不需要写任何配置文件。
+
+**遇到问题**
+
+| 现象 | 怎么办 |
+|---|---|
+| 提示 `No serial data received` | 直接重跑一遍命令。这块板的 USB 串口芯片偶尔会漏掉第一次复位，不用拔插、不用动接线。 |
+| 端口列表里找不到板子 | Windows 上先装 CH340 驱动；再确认线是数据线而不是纯充电线。 |
+| 屏幕一直是白的 | 大概率是屏幕批次不同 —— 本发布版按 ST7789（双 USB 口）编译。见[硬件](#硬件)下的提醒；ILI9341 的板子需要改代码。 |
+| 颜色不对（蓝天发橙） | 同样是面板批次差异。参数在 `main/drivers/board_pins.h`，这种情况需要重新编译。 |
+
+### 从源码编译
+
+#### 环境
 
 - **ESP-IDF v5.5**（其他 5.x 一般也可以）
 - Python 3.8+
 - 首次编译**需要联网**：组件管理器要拉一个依赖 —— `bitbank2/jpegdec ^1.6.2`
   （JPEG 解码，见 `main/idf_component.yml`）
 
-### 步骤
+#### 步骤
 
 ```bash
 # 0) 装好 ESP-IDF 后激活环境
@@ -104,7 +197,7 @@ idf.py -p COM9 flash monitor
 
 产物在 `build/ereader.bin`，可以直接把它烧到 `0x20000`（分区表见下）。
 
-### 如果拉不到组件（国内网络）
+#### 如果拉不到组件（国内网络）
 
 组件管理器走 HTTPS 拉 `components.espressif.com`。可以给一次构建设代理：
 
@@ -116,7 +209,7 @@ idf.py build
 
 拉到 `managed_components/` 之后就可以离线编译了。
 
-### 手工烧录（不想用 idf.py 时）
+#### 手工烧录（不想用 idf.py 时）
 
 ```bash
 esptool.py --chip esp32 --port COM9 --baud 460800 \
@@ -128,7 +221,7 @@ esptool.py --chip esp32 --port COM9 --baud 460800 \
   0x20000 build/ereader.bin
 ```
 
-### 分区表
+#### 分区表
 
 | 名称 | 类型 | 偏移 | 大小 |
 |---|---|---|---|
