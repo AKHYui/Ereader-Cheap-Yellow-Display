@@ -37,6 +37,8 @@ const char *net_wifi_state_text(void);
 
 bool net_wifi_connected(void);
 
+int net_wifi_rssi(void);
+
 const char *net_wifi_ssid(void);
 
 const char *net_wifi_ip(void);
@@ -59,6 +61,8 @@ void net_wifi_forget(void);
 esp_err_t net_wifi_ap_start(const char *ssid, const char *pass);
 
 void net_wifi_ap_stop(void);
+
+void net_wifi_shutdown(void);
 
 bool net_wifi_ap_on(void);
 

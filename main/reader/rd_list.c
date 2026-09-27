@@ -5,6 +5,7 @@
 #include "pv_disp.h"
 #include "pv_touch.h"
 #include "rd_bar.h"
+#include "rd_book.h"
 #include "rd_font.h"
 #include "rd_txt.h"
 #include "rd_view.h"
@@ -56,17 +57,6 @@ static const char *name_of(int i)
     return (i >= 0 && i < s_n) ? &s_pool[s_off[i]] : "";
 }
 
-static bool is_txt(const char *s)
-{
-    const size_t n = strlen(s);
-    if (n < 5) return false;
-    const char *e = s + n - 4;
-    return (e[0] == '.') &&
-           (e[1] == 't' || e[1] == 'T') &&
-           (e[2] == 'x' || e[2] == 'X') &&
-           (e[3] == 't' || e[3] == 'T');
-}
-
 static int cmp_off(const void *a, const void *b)
 {
     return strcmp(&s_pool[*(const uint32_t *)a], &s_pool[*(const uint32_t *)b]);
@@ -96,9 +86,9 @@ static void scan_novels(void)
 
     struct dirent *e;
     while ((e = readdir(d)) != NULL) {
-        if (e->d_name[0] == '.' || !is_txt(e->d_name)) continue;
+        if (e->d_name[0] == '.' || !rd_book_path_is_book(e->d_name)) continue;
         if (s_n >= RD_LIST_MAX) {
-            ESP_LOGW(TAG, "TXT 超过 %d 本，只列前 %d 本", RD_LIST_MAX, RD_LIST_MAX);
+            ESP_LOGW(TAG, "书超过 %d 本，只列前 %d 本", RD_LIST_MAX, RD_LIST_MAX);
             break;
         }
 
@@ -118,7 +108,7 @@ static void scan_novels(void)
     closedir(d);
 
     if (s_n > 1) qsort(s_off, (size_t)s_n, sizeof(uint32_t), cmp_off);
-    ESP_LOGI(TAG, "小说列表：%s 下 %d 本 TXT（名字池用 %u/%d 字节）",
+    ESP_LOGI(TAG, "书籍列表：%s 下 %d 本（TXT+EPUB，名字池用 %u/%d 字节）",
              RD_LIST_DIR, s_n, (unsigned)s_pool_used, RD_LIST_POOL);
 }
 
@@ -126,6 +116,16 @@ static int page_count(void)
 {
     const int p = (s_n + RD_LIST_PER_PAGE - 1) / RD_LIST_PER_PAGE;
     return p ? p : 1;
+}
+
+static void free_pool(void)
+{
+    if (s_pool) {
+        heap_caps_free(s_pool);
+        s_pool = NULL;
+    }
+    s_pool_used = 0;
+    s_n = 0;
 }
 
 static void list_draw(int pressed)
@@ -147,9 +147,9 @@ static void list_draw(int pressed)
 
         if (s_n == 0) {
             nui_text_mid_center(row, sy, PV_SCR_W / 2, 116, 40,
-                                "未找到 TXT 文件", NUI_DIM, NUI_BG);
+                                "未找到文件", NUI_DIM, NUI_BG);
 
-            rd_font_ascii_mid(row, sy, PV_SCR_W / 2, 166, "novels", NUI_DIM, NUI_BG);
+            rd_font_ascii_mid(row, sy, PV_SCR_W / 2, 166, "txt / epub", NUI_DIM, NUI_BG);
         } else {
             for (int i = 0; i < RD_LIST_PER_PAGE; i++) {
                 const int idx = s_pg * RD_LIST_PER_PAGE + i;
@@ -237,20 +237,27 @@ void rd_list_run(void)
             if (idx < s_n) {
                 static char path[RD_PATH_MAX];
                 snprintf(path, sizeof(path), RD_LIST_DIR "/%s", name_of(idx));
+
+                free_pool();
+
                 rd_view_run(path);
 
+                scan_novels();
+
+                if (s_n == 0) {
+                    back = true;
+                    continue;
+                }
+                const int last = page_count() - 1;
+                if (s_pg > last) s_pg = last;
+                if (s_pg < 0)    s_pg = 0;
             }
         }
 
         list_draw(pressed);
     }
 
-    if (s_pool) {
-        heap_caps_free(s_pool);
-        s_pool = NULL;
-    }
-    s_pool_used = 0;
-    s_n = 0;
+    free_pool();
 }
 
 #if RD_BOOT_SELFTEST
@@ -294,7 +301,7 @@ void rd_selftest(void)
         ESP_LOGI(TAG, "  [%d] %s", i, u8);
     }
     if (s_n == 0) {
-        ESP_LOGW(TAG, "目录里没有 TXT —— 先用网页「文件接收」选 novels 上传一本再重跑");
+        ESP_LOGW(TAG, "目录里没有书 —— 先用网页「文件接收」选 novels 上传一本再重跑");
         ESP_LOGI(TAG, "=== 自检结束 ===");
         return;
     }
@@ -304,17 +311,18 @@ void rd_selftest(void)
     ESP_LOGI(TAG, "打开：%s", path);
 
     const int64_t t0 = esp_timer_get_time();
-    if (!rd_txt_open(path)) {
+    if (!rd_book_open(path, NULL)) {
         ESP_LOGE(TAG, "打不开 —— 见上面的错误行");
         ESP_LOGI(TAG, "=== 自检结束 ===");
         return;
     }
     const int64_t ms = (esp_timer_get_time() - t0) / 1000;
-    ESP_LOGI(TAG, "《%s》%s %d 字节 %d 页（分页耗时 %dms）",
-             rd_txt_title(), rd_txt_encoding(), rd_txt_bytes(), rd_txt_pages(), (int)ms);
+    ESP_LOGI(TAG, "《%s》[%s] %s %d 字节 %d 页（分页耗时 %dms）",
+             rd_book_title(), rd_book_kind(), rd_book_encoding(),
+             rd_book_bytes(), rd_book_pages(), (int)ms);
 
     static rd_page_t pg;
-    if (rd_txt_load_page(&pg)) {
+    if (rd_book_load_page(&pg)) {
         ESP_LOGI(TAG, "第 1 页 %d 行，首行/末行：", pg.lines);
         if (pg.lines > 0) {
             log_cps(pg.cp[0], pg.n[0], 24);
@@ -324,27 +332,27 @@ void rd_selftest(void)
         ESP_LOGE(TAG, "取第 1 页失败");
     }
 
-    if (rd_txt_goto(rd_txt_pages() - 1) && rd_txt_load_page(&pg)) {
-        ESP_LOGI(TAG, "末页（第 %d 页）%d 行，末行：", rd_txt_pages(), pg.lines);
+    if (rd_book_goto(rd_book_pages() - 1) && rd_book_load_page(&pg)) {
+        ESP_LOGI(TAG, "末页（第 %d 页）%d 行，末行：", rd_book_pages(), pg.lines);
         if (pg.lines > 0) log_cps(pg.cp[pg.lines - 1], pg.n[pg.lines - 1], 24);
     }
 
-    rd_txt_close();
+    rd_book_close();
 
     ESP_LOGI(TAG, "--- 字库覆盖率抽样（每本前 30 页）---");
     for (int f = 0; f < s_n && f < 5; f++) {
         static char p2[RD_PATH_MAX];
         snprintf(p2, sizeof(p2), RD_LIST_DIR "/%s", name_of(f));
-        if (!rd_txt_open(p2)) continue;
+        if (!rd_book_open(p2, NULL)) continue;
 
-        const int scan = rd_txt_pages() < 30 ? rd_txt_pages() : 30;
+        const int scan = rd_book_pages() < 30 ? rd_book_pages() : 30;
         int total = 0, miss = 0;
         uint32_t seen[16];
         int nseen = 0;
 
         for (int pg = 0; pg < scan; pg++) {
             rd_page_t lpg;
-            if (!rd_txt_goto(pg) || !rd_txt_load_page(&lpg)) continue;
+            if (!rd_book_goto(pg) || !rd_book_load_page(&lpg)) continue;
             for (int L = 0; L < lpg.lines; L++) {
                 for (int k = 0; k < lpg.n[L]; k++) {
                     const uint32_t c = lpg.cp[L][k];
@@ -375,7 +383,7 @@ void rd_selftest(void)
                 ESP_LOGI(TAG, "       U+%04X %s", (unsigned)c, tmp);
             }
         }
-        rd_txt_close();
+        rd_book_close();
     }
 
     net_wifi_mem("阅读自检后");

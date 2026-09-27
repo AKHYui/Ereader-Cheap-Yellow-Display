@@ -289,6 +289,21 @@ uint16_t nui_item_row(uint16_t *row, int sy, int i, bool pressed)
     return bg;
 }
 
+int nui_cy(int i) { return NUI_CY0 + i * (NUI_CH + NUI_CGAP); }
+
+uint16_t nui_crow(uint16_t *row, int sy, int i, bool pressed)
+{
+    const uint16_t bg = pressed ? NUI_PRESS : NUI_PANEL;
+    nui_frame_row(row, sy, NUI_CX, nui_cy(i), NUI_CW, NUI_CH, bg, NUI_EDGE, 2);
+    return bg;
+}
+
+void nui_ctext(uint16_t *row, int sy, int i, const char *s,
+               uint16_t fg, uint16_t bg)
+{
+    nui_text_mid(row, sy, NUI_CX + 18, nui_cy(i), NUI_CH, s, fg, bg);
+}
+
 void nui_button_row(uint16_t *row, int sy, int x, int y, int w, int h,
                     const char *label, bool pressed)
 {
@@ -326,5 +341,31 @@ void nui_ascii2x_row(uint16_t *row, int sy, int x, int y_top, const char *s,
             }
         }
         cx += nui_ascii_w() * 2;
+    }
+}
+
+int nui_ascii_w1(const char *s)
+{
+    return s ? (int)strlen(s) * nui_ascii_w() : 0;
+}
+
+void nui_ascii_row(uint16_t *row, int sy, int x, int y_top, const char *s,
+                   uint16_t fg)
+{
+    if (!row || !s) return;
+
+    const int ly = sy - y_top;
+    if (ly < 0 || ly >= nui_ascii_h()) return;
+
+    int cx = x;
+    for (const char *p = s; *p; p++) {
+        const uint8_t *bm = nui_ascii_find((uint8_t)*p);
+        if (bm) {
+            const uint8_t bits = bm[ly];
+            for (int i = 0; i < 8; i++) {
+                if (bits & (0x80 >> i)) nui_putpx(row, cx + i, fg);
+            }
+        }
+        cx += nui_ascii_w();
     }
 }

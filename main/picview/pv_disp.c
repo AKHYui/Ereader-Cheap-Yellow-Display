@@ -16,6 +16,7 @@ static esp_lcd_panel_io_handle_t s_io;
 static SemaphoreHandle_t         s_done;
 
 static uint16_t (*s_band)[PV_SCR_W];
+static size_t      s_band_bytes;
 
 static int s_y0;
 static int s_y_limit;
@@ -114,8 +115,21 @@ esp_err_t pv_disp_init(esp_lcd_panel_handle_t panel,
         return ESP_ERR_NO_MEM;
     }
 
-    const size_t band_bytes = (size_t)PV_BAND_H * PV_SCR_W * sizeof(uint16_t);
+    const size_t band_self = (size_t)PV_BAND_H * PV_SCR_W * sizeof(uint16_t);
+    size_t       band_bytes = (band_self < PV_BAND_MIN_ALLOC) ? PV_BAND_MIN_ALLOC
+                                                              : band_self;
+
     s_band = heap_caps_malloc(band_bytes, MALLOC_CAP_DMA | MALLOC_CAP_8BIT);
+    if (!s_band && band_bytes > band_self) {
+
+        ESP_LOGW(TAG, "行带外借区要不到（想要 %u 字节，DMA 最大可分配块只有 %u）"
+                      "—— 退回 %u 字节；EPUB 将借不到 LZ 字典，遥控读 EPUB 会失效",
+                 (unsigned)band_bytes,
+                 (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_DMA),
+                 (unsigned)band_self);
+        band_bytes = band_self;
+        s_band = heap_caps_malloc(band_bytes, MALLOC_CAP_DMA | MALLOC_CAP_8BIT);
+    }
     if (!s_band) {
         ESP_LOGE(TAG, "行带分配失败：需要 %u 字节，DMA 最大可分配块只有 %u",
                  (unsigned)band_bytes,
@@ -124,16 +138,24 @@ esp_err_t pv_disp_init(esp_lcd_panel_handle_t panel,
         s_done = NULL;
         return ESP_ERR_NO_MEM;
     }
+    s_band_bytes = band_bytes;
 
     const esp_lcd_panel_io_callbacks_t cbs = {
         .on_color_trans_done = on_trans_done,
     };
     ESP_ERROR_CHECK(esp_lcd_panel_io_register_event_callbacks(s_io, &cbs, NULL));
 
-    ESP_LOGI(TAG, "显示层就绪：行带 %dx%d (%u 字节 DMA)，最大可分配块 %u",
-             PV_SCR_W, PV_BAND_H, (unsigned)band_bytes,
+    ESP_LOGI(TAG, "显示层就绪：行带 %dx%d 用 %u 字节，共分配 %u 字节"
+                  "（这一整块都可外借，给 EPUB 的 LZ 字典），最大可分配块 %u",
+             PV_SCR_W, PV_BAND_H, (unsigned)band_self, (unsigned)band_bytes,
              (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT));
     return ESP_OK;
+}
+
+void *pv_disp_scratch(size_t need)
+{
+    if (!s_band || need == 0 || need > s_band_bytes) return NULL;
+    return s_band;
 }
 
 void pv_disp_deinit(void)
@@ -141,6 +163,7 @@ void pv_disp_deinit(void)
     if (s_band) {
         heap_caps_free(s_band);
         s_band = NULL;
+        s_band_bytes = 0;
     }
     if (s_done) {
         vSemaphoreDelete(s_done);

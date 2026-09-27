@@ -55,6 +55,11 @@ int  nui_ascii2x_w(const char *s);
 void nui_ascii2x_row(uint16_t *row, int sy, int x, int y_top, const char *s,
                      uint16_t fg);
 
+int  nui_ascii_w1(const char *s);
+
+void nui_ascii_row(uint16_t *row, int sy, int x, int y_top, const char *s,
+                   uint16_t fg);
+
 void nui_tri_row(uint16_t *row, int sy, int cx, int cy, int size, int dir,
                  uint16_t c);
 
@@ -70,6 +75,12 @@ void nui_arrow_row(uint16_t *row, int sy, int x, int y, uint16_t c);
 #define NUI_ITEM_GAP    12
 #define NUI_ITEM_Y0     58
 
+#define NUI_CX          14
+#define NUI_CW          (PV_SCR_W - NUI_CX * 2)
+#define NUI_CH          46
+#define NUI_CGAP         8
+#define NUI_CY0         52
+
 #define NUI_TITLE_Y      4
 #define NUI_TITLE_H     40
 #define NUI_TITLE_LINE  46
@@ -79,6 +90,13 @@ int nui_item_y(int i);
 void nui_title_row(uint16_t *row, int sy, const char *title);
 
 uint16_t nui_item_row(uint16_t *row, int sy, int i, bool pressed);
+
+int nui_cy(int i);
+
+uint16_t nui_crow(uint16_t *row, int sy, int i, bool pressed);
+
+void nui_ctext(uint16_t *row, int sy, int i, const char *s,
+               uint16_t fg, uint16_t bg);
 
 #define NUI_BAR_Y        272
 #define NUI_BAR_H         48

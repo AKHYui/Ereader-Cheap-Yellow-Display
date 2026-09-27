@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<meta name="theme-color" content="#111111">
+<title>遥控 · CYD 阅读器</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  body { margin: 0; padding: 14px; background: #111; color: #eee;
+         font: 16px/1.5 system-ui, -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; }
+  h1 { font-size: 17px; font-weight: 500; margin: 0 0 4px; }
+  .sub { font-size: 12px; color: #888; margin: 0 0 14px; }
+  .card { background: #1c1c1e; border-radius: 12px; padding: 12px 14px; margin-bottom: 12px; }
+  .now { font-size: 15px; }
+  .now b { font-weight: 500; }
+  .now .pg { color: #6ee7a8; font-variant-numeric: tabular-nums; }
+  .row { display: flex; gap: 10px; margin-bottom: 10px; }
+  button {
+    flex: 1; min-height: 54px; font-size: 17px; font-family: inherit;
+    border: 0; border-radius: 10px; background: #2c2c2e; color: #fff;
+  }
+  button:active { background: #48484a; }
+  button.big { min-height: 64px; font-size: 19px; }
+  button.primary { background: #0a84ff; }
+  input {
+    flex: 1; min-height: 54px; font-size: 17px; font-family: inherit;
+    border: 0; border-radius: 10px; background: #2c2c2e; color: #fff;
+    padding: 0 14px; width: 100%;
+  }
+  h2 { font-size: 13px; font-weight: 500; color: #888; margin: 18px 0 8px; }
+  ul { list-style: none; margin: 0; padding: 0; }
+  li { margin-bottom: 8px; }
+  li a {
+    display: block; padding: 14px; border-radius: 10px; background: #1c1c1e;
+    color: #eee; text-decoration: none; word-break: break-all;
+  }
+  li a:active { background: #2c2c2e; }
+  li a.on { background: #0a84ff; }
+  .tag { font-size: 11px; color: #6ee7a8; border: 1px solid #35543f;
+         border-radius: 4px; padding: 1px 4px; margin-left: 6px; vertical-align: 1px; }
+  .hint { font-size: 12px; color: #777; margin-top: 8px; line-height: 1.5; }
+</style>
+</head>
+<body>
+
+<h1>网页遥控</h1>
+<p class="sub">CYD 阅读器 · 用手机控制板子</p>
+
+<div class="card">
+  <div class="now" id="now">正在连接…</div>
+</div>
+
+<div class="row">
+  <button class="big" id="prev">▲ 上一页</button>
+  <button class="big" id="next">▼ 下一页</button>
+</div>
+
+<div class="row">
+  <button id="darker">暗一档</button>
+  <button id="brighter">亮一档</button>
+</div>
+
+<div class="row">
+  <input id="pg" type="number" min="1" inputmode="numeric" placeholder="跳到第几页">
+  <button id="go">跳转</button>
+</div>
+
+<h2>书架（点一本，板子上就打开）</h2>
+<ul id="books"></ul>
+<p class="hint">
+  遥控时板子必须开着热点或连着同一个 WiFi。<code>.txt</code> 与 <code>.epub</code> 都能开；
+  EPUB 要先在板子上把全书分页，第一下会等几秒，翻页也比 TXT 慢一点（每页要重解一章）。
+</p>
+
+<script>
+const $ = (id) => document.getElementById(id);
+
+async function api(path) {
+  try {
+    const r = await fetch(path, { cache: 'no-store' });
+    return r.ok ? await r.json() : null;
+  } catch (e) { return null; }
+}
+
+function cmd(c, v) {
+  return api('/api/cmd?c=' + c + (v === undefined ? '' : '&v=' + v));
+}
+
+function fmtNow(s) {
+  if (!s || !s.pages) return '板子上没有打开书 —— 从下面的书架点一本';
+  return '<b>' + esc(s.name) + '</b><br>第 <span class="pg">' + s.page + '</span> / ' + s.pages + ' 页'
+       + (s.bright ? ' · 亮度 ' + s.bright + '%' : '');
+}
+
+function esc(t) {
+  const d = document.createElement('div');
+  d.textContent = t;
+  return d.innerHTML;
+}
+
+async function refresh() {
+  const s = await api('/api/state');
+  if (s) $('now').innerHTML = fmtNow(s);
+  else $('now').textContent = '连不上板子（还在同一个网络里吗？）';
+}
+
+async function loadBooks() {
+  const b = await api('/api/books');
+  const ul = $('books');
+  if (!b || !b.books || !b.books.length) {
+    ul.innerHTML = '<li class="hint">卡上没有 .txt / .epub 文件。用「文件接收」上传一本。</li>';
+    return;
+  }
+  ul.innerHTML = b.books.map(function (n) {
+    const epub = /\.epub$/i.test(n);
+    const tag = epub ? ' <span class="tag">EPUB</span>' : '';
+    return '<li><a href="#" data-n="' + encodeURIComponent(n) + '"'
+         + ' data-epub="' + (epub ? 1 : 0) + '">' + esc(n) + tag + '</a></li>';
+  }).join('');
+}
+
+$('books').addEventListener('click', async function (e) {
+  const a = e.target.closest('a');
+  if (!a) return;
+  e.preventDefault();
+  const n = a.getAttribute('data-n');
+  const epub = a.getAttribute('data-epub') === '1';
+  a.textContent = epub ? '正在解析 EPUB…（要几秒）' : '正在打开…';
+  const r = await api('/api/open?name=' + n);
+  if (!r || !r.ok) {
+    a.textContent = epub
+      ? '打不开：板子内存不够（EPUB 要先整本分页）。换成 .txt，或在板子上返回主菜单后再试。'
+      : '打不开（试试别本）';
+  }
+  setTimeout(refresh, 600);
+  setTimeout(refresh, 1600);       /* 分页要一会儿（大文件慢），多刷一次 */
+  if (epub) setTimeout(refresh, 4000);   /* EPUB 全书分页：再补一次，免得一直显示"没打开书" */
+});
+
+$('prev').onclick = () => { cmd('prev'); setTimeout(refresh, 250); };
+$('next').onclick = () => { cmd('next'); setTimeout(refresh, 250); };
+$('darker').onclick = () => { cmd('light', -5); setTimeout(refresh, 250); };
+$('brighter').onclick = () => { cmd('light', 5); setTimeout(refresh, 250); };
+$('go').onclick = () => {
+  const p = parseInt($('pg').value, 10);
+  if (p > 0) { cmd('goto', p - 1); setTimeout(refresh, 250); }
+};
+
+loadBooks();
+refresh();
+setInterval(refresh, 2000);
+</script>
+</body>
+</html>

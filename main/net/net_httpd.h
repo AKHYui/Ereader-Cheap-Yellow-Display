@@ -11,6 +11,8 @@ extern "C" {
 
 esp_err_t net_httpd_start(void);
 
+void      net_httpd_stop(void);
+
 bool net_httpd_running(void);
 
 #define NET_HTTPD_DEFAULT_DIR  "images"

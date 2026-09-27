@@ -2,6 +2,7 @@
 
 #include "net_ap.h"
 #include "net_recv.h"
+#include "net_remote.h"
 #include "net_wifi.h"
 #include "net_wlan.h"
 #include "nui_ui.h"
@@ -18,9 +19,16 @@
 
 static const char *TAG = PV_TAG;
 
-#define N_ITEM 4
+#define N_ITEM 5
 
-enum { MH_NONE = 0, MH_WLAN = 1, MH_AP = 2, MH_RECV = 3, MH_BACK = 4 };
+static void item_arrow(uint16_t *row, int sy, int i, bool pressed, const char *label)
+{
+    const uint16_t bg = nui_crow(row, sy, i, pressed);
+    nui_text_mid(row, sy, NUI_CX + 18, nui_cy(i), NUI_CH, label, NUI_FG, bg);
+    nui_text_mid(row, sy, NUI_CX + NUI_CW - 22, nui_cy(i), NUI_CH, ">", NUI_FG, bg);
+}
+
+enum { MH_NONE = 0, MH_WLAN = 1, MH_AP = 2, MH_RECV = 3, MH_REMOTE = 4, MH_BACK = 5 };
 
 _Static_assert(MH_BACK - MH_WLAN == N_ITEM - 1, "MH_* 必须与条目顺序一一对应且连续");
 
@@ -35,42 +43,24 @@ static void net_menu_draw(int pressed)
         nui_title_row(row, sy, "网络");
 
         {
-            const uint16_t bg = nui_item_row(row, sy, 0, pressed == 0);
-            const int      y  = nui_item_y(0);
+            const uint16_t bg = nui_crow(row, sy, 0, pressed == 0);
+            const int      y  = nui_cy(0);
 
-            nui_text_mid(row, sy, NUI_ITEM_X + 18, y, NUI_ITEM_H, "WLAN", NUI_FG, bg);
+            nui_text_mid(row, sy, NUI_CX + 18, y, NUI_CH, "WLAN", NUI_FG, bg);
 
             const bool  ok = net_wifi_connected();
             const char *st = ok ? "已连接" : "未连接";
-            nui_text_mid(row, sy, NUI_ITEM_X + NUI_ITEM_W - 34 - nui_text_w(st),
-                         y, NUI_ITEM_H, st, ok ? NUI_OK : NUI_DIM, bg);
-            nui_text_mid(row, sy, NUI_ITEM_X + NUI_ITEM_W - 22, y, NUI_ITEM_H,
+            nui_text_mid(row, sy, NUI_CX + NUI_CW - 34 - nui_text_w(st),
+                         y, NUI_CH, st, ok ? NUI_OK : NUI_DIM, bg);
+            nui_text_mid(row, sy, NUI_CX + NUI_CW - 22, y, NUI_CH,
                          ">", NUI_FG, bg);
         }
 
-        {
-            const uint16_t bg = nui_item_row(row, sy, 1, pressed == 1);
-            const int      y  = nui_item_y(1);
+        item_arrow(row, sy, 1, pressed == 1, "AP模式");
+        item_arrow(row, sy, 2, pressed == 2, "文件接收");
+        item_arrow(row, sy, 3, pressed == 3, "网页遥控");
 
-            nui_text_mid(row, sy, NUI_ITEM_X + 18, y, NUI_ITEM_H, "AP模式", NUI_FG, bg);
-            nui_text_mid(row, sy, NUI_ITEM_X + NUI_ITEM_W - 22, y, NUI_ITEM_H,
-                         ">", NUI_FG, bg);
-        }
-
-        {
-            const uint16_t bg = nui_item_row(row, sy, 2, pressed == 2);
-            const int      y  = nui_item_y(2);
-
-            nui_text_mid(row, sy, NUI_ITEM_X + 18, y, NUI_ITEM_H, "文件接收", NUI_FG, bg);
-            nui_text_mid(row, sy, NUI_ITEM_X + NUI_ITEM_W - 22, y, NUI_ITEM_H,
-                         ">", NUI_FG, bg);
-        }
-
-        {
-            const uint16_t bg = nui_item_row(row, sy, 3, pressed == 3);
-            nui_text_mid(row, sy, NUI_ITEM_X + 18, nui_item_y(3), NUI_ITEM_H,
-                         "返回", NUI_FG, bg);
-        }
+        nui_ctext(row, sy, 4, "返回", NUI_FG, nui_crow(row, sy, 4, pressed == 4));
     }
 
     pv_disp_page_end();
@@ -80,9 +70,9 @@ static int net_hit(int x, int y, void *ctx)
 {
     (void)ctx;
     for (int i = 0; i < N_ITEM; i++) {
-        const int iy = nui_item_y(i);
-        if (x >= NUI_ITEM_X && x < NUI_ITEM_X + NUI_ITEM_W &&
-            y >= iy && y < iy + NUI_ITEM_H) {
+        const int iy = nui_cy(i);
+        if (x >= NUI_CX && x < NUI_CX + NUI_CW &&
+            y >= iy && y < iy + NUI_CH) {
             return MH_WLAN + i;
         }
     }
@@ -93,7 +83,7 @@ void net_menu_run(void)
 {
     int pressed = -1;
     net_menu_draw(pressed);
-    ESP_LOGI(TAG, "网络菜单就绪（WLAN / AP模式 / 文件接收 / 返回）");
+    ESP_LOGI(TAG, "网络菜单就绪（WLAN / AP模式 / 文件接收 / 网页遥控 / 返回）");
 
     for (;;) {
 
@@ -128,6 +118,9 @@ void net_menu_run(void)
             net_recv_run();
             net_menu_draw(pressed);
         } else if (idx == 3) {
+            net_remote_run();
+            net_menu_draw(pressed);
+        } else if (idx == 4) {
             return;
         } else {
             net_menu_draw(pressed);

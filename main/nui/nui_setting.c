@@ -2,6 +2,8 @@
 
 #include "lcd_st7789.h"
 #include "net_wifi.h"
+#include "nui_diag.h"
+#include "nui_led.h"
 #include "nui_sec.h"
 #include "nui_ui.h"
 #include "pv_config.h"
@@ -19,11 +21,11 @@
 
 static const char *TAG = PV_TAG;
 
-enum { SH_NONE = 0, SH_SEC = 1, SH_BRI = 2, SH_FORGET = 3, SH_BACK = 4 };
+enum { SH_NONE = 0, SH_SEC = 1, SH_BRI = 2, SH_DIAG = 3, SH_FORGET = 4, SH_BACK = 5 };
 
-_Static_assert(SH_BACK - SH_SEC == 3, "SH_* 必须与条目顺序一一对应且连续");
+_Static_assert(SH_BACK - SH_SEC == 4, "SH_* 必须与条目顺序一一对应且连续");
 
-#define SET_ITEMS   4
+#define SET_ITEMS   5
 #define FLASH_MS 1200
 
 static bool    s_flash;
@@ -32,17 +34,20 @@ static int64_t s_flash_t0;
 static int64_t now_ms(void) { return esp_timer_get_time() / 1000; }
 
 #define BRI_STEP     5
-#define BRI_NUM_Y   76
+#define BRI_NUM_Y   56
 #define BRI_BAR_X   20
 #define BRI_BAR_W   (PV_SCR_W - BRI_BAR_X * 2)
-#define BRI_BAR_Y   148
-#define BRI_BAR_H   26
-#define BRI_HINT_Y  186
+#define BRI_BAR_Y   100
+#define BRI_BAR_H   24
+#define BRI_HINT_Y  132
 #define BRI_BTN_W   56
-#define BRI_BTN_H   44
-#define BRI_BTN_Y   250
+#define BRI_BTN_H   48
+#define BRI_BTN_Y   172
 
-enum { BR_NONE = 0, BR_DOWN = 1, BR_BACK = 2, BR_UP = 3 };
+#define LED_ROW_Y   236
+#define LED_ROW_H    52
+
+enum { BR_NONE = 0, BR_DOWN = 1, BR_BACK = 2, BR_UP = 3, BR_LED = 4 };
 
 #define BRI_BTN_X(i)  (BRI_BAR_X + (i) * (BRI_BTN_W + 16))
 
@@ -59,7 +64,7 @@ static void bri_draw(int pressed)
         uint16_t *row = pv_disp_page_row(sy);
         if (!row) continue;
 
-        nui_title_row(row, sy, "亮度");
+        nui_title_row(row, sy, "显示");
 
         {
             const int w = nui_ascii2x_w(num);
@@ -85,6 +90,14 @@ static void bri_draw(int pressed)
             nui_button_row(row, sy, BRI_BTN_X(i), BRI_BTN_Y, BRI_BTN_W, BRI_BTN_H,
                            LBL[i], pressed == (i + 1));
         }
+
+        {
+            static char lb[32];
+
+            snprintf(lb, sizeof(lb), "指示灯 %s", nui_led_enabled() ? "开" : "关");
+            nui_button_row(row, sy, BRI_BAR_X, LED_ROW_Y, BRI_BAR_W, LED_ROW_H,
+                           lb, pressed == BR_LED);
+        }
     }
 
     pv_disp_page_end();
@@ -99,6 +112,10 @@ static int bri_hit(int x, int y, void *ctx)
             y >= BRI_BTN_Y && y < BRI_BTN_Y + BRI_BTN_H) {
             return i + 1;
         }
+    }
+    if (x >= BRI_BAR_X && x < BRI_BAR_X + BRI_BAR_W &&
+        y >= LED_ROW_Y && y < LED_ROW_Y + LED_ROW_H) {
+        return BR_LED;
     }
     return BR_NONE;
 }
@@ -129,10 +146,12 @@ static void bri_run(void)
         const int h = pv_touch_hit(bri_hit, NULL);
         pressed = 0;
 
-        if (h == BR_DOWN) {
-            lcd_set_brightness(lcd_get_brightness() - BRI_STEP);
-        } else if (h == BR_UP) {
-            lcd_set_brightness(lcd_get_brightness() + BRI_STEP);
+        if (h == BR_DOWN || h == BR_UP) {
+            lcd_set_brightness(lcd_get_brightness()
+                               + (h == BR_UP ? BRI_STEP : -BRI_STEP));
+        } else if (h == BR_LED) {
+
+            nui_led_set_enabled(!nui_led_enabled());
         } else if (h == BR_BACK) {
             lcd_bl_save();
             return;
@@ -152,30 +171,14 @@ static void setting_draw(int pressed)
 
         nui_title_row(row, sy, "设置");
 
-        {
-            const uint16_t bg = nui_item_row(row, sy, 0, pressed == 0);
-            nui_text_mid(row, sy, NUI_ITEM_X + 18, nui_item_y(0), NUI_ITEM_H,
-                         "设备安全", NUI_FG, bg);
-        }
+        nui_ctext(row, sy, 0, "设备安全", NUI_FG, nui_crow(row, sy, 0, pressed == 0));
+        nui_ctext(row, sy, 1, "显示",     NUI_FG, nui_crow(row, sy, 1, pressed == 1));
+        nui_ctext(row, sy, 2, "芯片体检", NUI_FG, nui_crow(row, sy, 2, pressed == 2));
 
-        {
-            const uint16_t bg = nui_item_row(row, sy, 1, pressed == 1);
-            nui_text_mid(row, sy, NUI_ITEM_X + 18, nui_item_y(1), NUI_ITEM_H,
-                         "亮度调节", NUI_FG, bg);
-        }
+        nui_ctext(row, sy, 3, s_flash ? "已删除" : "忘记网络",
+                  s_flash ? NUI_OK : NUI_WARN, nui_crow(row, sy, 3, pressed == 3));
 
-        {
-            const uint16_t bg = nui_item_row(row, sy, 2, pressed == 2);
-            nui_text_mid(row, sy, NUI_ITEM_X + 18, nui_item_y(2), NUI_ITEM_H,
-                         s_flash ? "已删除" : "忘记网络",
-                         s_flash ? NUI_OK : NUI_WARN, bg);
-        }
-
-        {
-            const uint16_t bg = nui_item_row(row, sy, 3, pressed == 3);
-            nui_text_mid(row, sy, NUI_ITEM_X + 18, nui_item_y(3), NUI_ITEM_H,
-                         "返回", NUI_FG, bg);
-        }
+        nui_ctext(row, sy, 4, "返回", NUI_FG, nui_crow(row, sy, 4, pressed == 4));
     }
 
     pv_disp_page_end();
@@ -185,9 +188,9 @@ static int setting_hit(int x, int y, void *ctx)
 {
     (void)ctx;
     for (int i = 0; i < SET_ITEMS; i++) {
-        const int iy = nui_item_y(i);
-        if (x >= NUI_ITEM_X && x < NUI_ITEM_X + NUI_ITEM_W &&
-            y >= iy && y < iy + NUI_ITEM_H) {
+        const int iy = nui_cy(i);
+        if (x >= NUI_CX && x < NUI_CX + NUI_CW &&
+            y >= iy && y < iy + NUI_CH) {
             return SH_SEC + i;
         }
     }
@@ -199,7 +202,7 @@ void nui_setting_run(void)
     int pressed = -1;
     s_flash = false;
     setting_draw(pressed);
-    ESP_LOGI(TAG, "设置页就绪（设备安全 / 亮度调节 / 忘记网络 / 返回）");
+    ESP_LOGI(TAG, "设置页就绪（设备安全 / 显示 / 芯片体检 / 忘记网络 / 返回）");
 
     for (;;) {
 
@@ -236,6 +239,9 @@ void nui_setting_run(void)
             bri_run();
             setting_draw(pressed);
         } else if (idx == 2) {
+            nui_diag_run();
+            setting_draw(pressed);
+        } else if (idx == 3) {
 
             net_wifi_disconnect();
             net_wifi_forget();
@@ -243,7 +249,7 @@ void nui_setting_run(void)
             s_flash_t0 = now_ms();
             ESP_LOGI(TAG, "用户点了「忘记网络」");
             setting_draw(pressed);
-        } else if (idx == 3) {
+        } else if (idx == 4) {
             return;
         } else {
             setting_draw(pressed);

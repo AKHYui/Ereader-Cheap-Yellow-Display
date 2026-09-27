@@ -3,6 +3,7 @@
 #include "gbk_map.h"
 #include "gbk_text.h"
 #include "rd_font.h"
+#include "rd_walk.h"
 
 #include "esp_heap_caps.h"
 #include "esp_log.h"
@@ -16,8 +17,6 @@ static const char *TAG = "rd_txt";
 #define PAGE_CAP_MAX  12288
 
 #define IN_BUF_SZ       1024
-
-_Static_assert(RD_TEXT_W == 240, "RD_TEXT_W 必须与 PV_SCR_W 一致");
 
 static FILE    *s_fp;
 static bool     s_open;
@@ -132,56 +131,6 @@ static bool detect_utf8(FILE *f)
     return multi > 0;
 }
 
-typedef struct {
-    int  lines;
-    int  line_w;
-    int  line_n;
-    bool line_text;
-
-    bool pending;
-} walk_t;
-
-static void w_flush(walk_t *w)
-{
-    w->lines++;
-    w->line_w = 0;
-    w->line_n = 0;
-    w->line_text = false;
-    if (w->lines >= RD_LINES_PER_PAGE) w->pending = true;
-}
-
-static bool w_feed(rd_page_t *out, walk_t *w, uint32_t c)
-{
-    if (c == '\r') return false;
-    if (c == '\t') c = ' ';
-    if (c < 0x20 && c != '\n') return false;
-
-    if (c == '\n') {
-
-        if (!w->line_text) return false;
-        w_flush(w);
-        return false;
-    }
-
-    const int a = rd_font_adv(c);
-    if (w->line_n > 0 && w->line_w + a > RD_TEXT_W) {
-        w_flush(w);
-        if (w->pending) return true;
-    }
-
-    if (c != ' ' && c != 0x3000u) w->line_text = true;
-
-    if (out && w->lines < RD_LINES_PER_PAGE && w->line_n < RD_MAX_CPP) {
-        out->cp[w->lines][w->line_n] = c;
-    }
-    w->line_n++;
-    w->line_w += a;
-    if (out && w->lines < RD_LINES_PER_PAGE && w->line_n <= RD_MAX_CPP) {
-        out->n[w->lines] = (uint8_t)w->line_n;
-    }
-    return false;
-}
-
 static bool page_push(int64_t off)
 {
     if (s_npages >= PAGE_CAP_MAX) return false;
@@ -240,7 +189,7 @@ bool rd_txt_open(const char *path)
     r.pushed = -1;
     if (s_bom) { in_byte(&r); in_byte(&r); in_byte(&r); }
 
-    walk_t w;
+    rd_walk_t w;
     memset(&w, 0, sizeof(w));
 
     if (!page_push(r.off)) {
@@ -263,7 +212,7 @@ bool rd_txt_open(const char *path)
             w.pending = false;
             w.lines   = 0;
         }
-        if (w_feed(NULL, &w, (uint32_t)v)) {
+        if (rd_walk_feed(NULL, &w, (uint32_t)v)) {
             in_push(&r, v, off_cur);
         }
     }
@@ -341,7 +290,7 @@ bool rd_txt_load_page(rd_page_t *out)
     r.off    = (int64_t)s_pages[s_page];
     r.pushed = -1;
 
-    walk_t w;
+    rd_walk_t w;
     memset(&w, 0, sizeof(w));
 
     for (;;) {
@@ -350,17 +299,13 @@ bool rd_txt_load_page(rd_page_t *out)
         if (v < 0) break;
         if (w.lines >= RD_LINES_PER_PAGE) break;
 
-        if (w_feed(out, &w, (uint32_t)v)) {
+        if (rd_walk_feed(out, &w, (uint32_t)v)) {
             in_push(&r, v, off_cur);
 
         }
     }
 
-    if (w.line_n > 0 && w.line_text && w.lines < RD_LINES_PER_PAGE) {
-        out->lines = w.lines + 1;
-    } else {
-        out->lines = w.lines;
-    }
+    rd_walk_finish(out, &w);
     return true;
 }
 

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 
 #include "esp_err.h"
@@ -14,6 +15,8 @@ extern "C" {
 esp_err_t pv_disp_init(esp_lcd_panel_handle_t panel,
                        esp_lcd_panel_io_handle_t io);
 void      pv_disp_deinit(void);
+
+void *pv_disp_scratch(size_t need);
 
 void pv_disp_img_clear(void);
 

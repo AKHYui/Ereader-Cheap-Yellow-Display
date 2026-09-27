@@ -2,6 +2,8 @@
 #include "pv_config.h"
 #include "board_pins.h"
 
+#include "nui_led.h"
+
 #include "driver/gpio.h"
 #include "esp_log.h"
 #include "esp_rom_sys.h"
@@ -201,6 +203,8 @@ static void pv_touch_task(void *arg)
                 if (now) {
                     s_last_valid = false;
                     s_settle     = 0;
+
+                    nui_led_flash(NUI_LED_WHITE);
                 }
 
                 const pv_touch_evt_t ev = { x, y, rx, ry, z_raw, now };

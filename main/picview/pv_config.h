@@ -13,6 +13,8 @@
 
 #define PV_BAND_H        64
 
+#define PV_BAND_MIN_ALLOC  32768
+
 #define PV_BG         0x0000
 #define PV_BAR_BG     0x18E3
 #define PV_BTN_BG     0x39E7

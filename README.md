@@ -2,8 +2,9 @@
 
 # Ereader · ESP32 Cheap Yellow Display Handheld
 
-Firmware for the **ESP32-2432S028R (Cheap Yellow Display / CYD)**: read TXT novels, browse
-images, transfer files over Wi-Fi, 6-digit boot password, PWM brightness control.
+Firmware for the **ESP32-2432S028R (Cheap Yellow Display / CYD)**: read `.txt` novels and
+**EPUB** books, browse images, transfer files over Wi-Fi, **drive the reader from your phone's
+browser**, 6-digit boot password, PWM brightness control.
 
 The entire UI is a hand-written **row-band streaming renderer**. There is only one 240×64 DMA
 band for the whole screen, and every screen is composed row by row before being pushed to the
@@ -23,10 +24,10 @@ panel. This board has no PSRAM and its largest contiguous free block is only ~80
 
 | Module | Capability |
 |---|---|
-| **Reader** | Scans `.txt` files under `/sdcard/novels`; auto-detects UTF-8 / GBK / GB2312, with or without BOM; automatic pagination and blank-line filtering; white text on black; **bookmarks** (the page number survives a reboot) |
+| **Reader** | `.txt` and **`.epub`** under `/sdcard/novels`. TXT: auto-detects UTF-8 / GBK / GB2312, with or without BOM. EPUB: unzipped on the fly, images skipped, text only. Automatic pagination and blank-line filtering; white text on black; **bookmarks** (the page number survives a reboot) |
 | **Images** | Browsing of JPEG / BMP under `/sdcard/images`; aspect-fit, never stretched; 1080p images work; **delete** the current image (with confirmation) |
-| **Network** | Join a WLAN (scan, on-screen password keyboard, status); **AP mode** — the board hosts its own hotspot, so files can be transferred with no router at all; browser upload page (target-directory picker + file list) |
-| **Settings** | **Device security**: 6-digit boot password (asked on every boot once enabled); **brightness**: 1–100% via PWM; forget network |
+| **Network** | Join a WLAN (scan, on-screen password keyboard, status); **AP mode** — the board hosts its own hotspot, so no router is needed at all; browser upload page (target-directory picker + file list); **phone remote control** — open `http://<board-ip>/r` and page / jump / set brightness from the phone; **on-screen QR codes** for the hotspot and for that URL |
+| **Settings** | **Device security**: 6-digit boot password (asked on every boot once enabled); **brightness**: 1–100% via PWM; **device diagnostics** (heap, largest block, stack, NVS, SD, RSSI, uptime, reset reason — refreshed every second); **RGB status LED** (blinks on an action, can be switched off); forget network |
 | **Filesystem** | `images` / `novels` are created automatically when a card is inserted — a blank card works immediately |
 
 ## Screenshots
@@ -50,6 +51,10 @@ panel. This board has no PSRAM and its largest contiguous free block is only ~80
 ### Settings
 
 ![Settings / device security / password keypad / brightness](screenshots/05-settings.png)
+
+### Phone remote control
+
+![QR code page / remote-control page / device diagnostics](screenshots/06-remote.png)
 
 ---
 
@@ -164,8 +169,8 @@ with the same instructions in English and Chinese.
    ```
 
 5. **Insert a FAT32 microSD card.** On boot the firmware creates `/sdcard/images` and
-   `/sdcard/novels` by itself, so a blank card is fine. Either copy `.jpg` / `.bmp` and `.txt`
-   files onto it directly, or use the board's own upload page — see
+   `/sdcard/novels` by itself, so a blank card is fine. Either copy `.jpg` / `.bmp` and
+   `.txt` / `.epub` files onto it directly, or use the board's own upload page — see
    [Transfer files](#2-transfer-files).
 
 6. **Use it from the main menu**: READER / IMAGES / NETWORK / SETTINGS. Nothing needs to be
@@ -239,7 +244,7 @@ Format it as **FAT32** and insert it. On boot the firmware creates these two dir
 
 ```
 /sdcard/images    <- images (jpg / jpeg / bmp; subdirectories are not scanned)
-/sdcard/novels    <- novels (txt)
+/sdcard/novels    <- novels (txt / epub)
 ```
 
 ### 2. Transfer files
@@ -277,10 +282,10 @@ settings page already means you passed the boot check).
 └── main/
     ├── main.c                  entry point + shell (main menu -> dispatch -> back to menu)
     ├── drivers/                display / touch / SD card / board definitions
-    ├── nui/                    UI shell: main menu, settings, device security, drawing layer, fonts
+    ├── nui/                    UI shell: menu, settings, security, diagnostics, LED, QR encoder, drawing layer, fonts
     ├── picview/                image viewer (decoder + row-band display + touch + scanning)
-    ├── reader/                 reader (TXT pagination, 16px fonts, button bar, bookmarks)
-    ├── net/                    networking (Wi-Fi wrapper, HTTP upload, AP mode, screens)
+    ├── reader/                 reader (TXT + EPUB pagination, 16px fonts, button bar, bookmarks)
+    ├── net/                    networking (Wi-Fi, HTTP upload, AP mode, phone remote, QR page, screens)
     └── book/                   GBK tables and filename encoding conversion
 ```
 
@@ -327,6 +332,22 @@ the symptom being an entry that is listed but can neither be opened nor deleted.
 a name pool and refuses overflow explicitly (skip and warn), and path assembly detects truncation
 as well.
 
+**The row band doubles as a 32 KB scratch buffer**
+Decompressing an EPUB needs a 32 KB *contiguous* LZ dictionary. Bringing Wi-Fi up eats roughly
+50–63 KB of heap, and the phone remote **requires** Wi-Fi — so on this board the dictionary and the
+network cannot coexist. The fix is to share: the row band is the only large DMA buffer in the
+firmware, and it sits completely idle while a chapter is being decompressed (decompression never
+draws). It is therefore allocated slightly larger than the band itself needs
+(`pv_config.h: PV_BAND_MIN_ALLOC`), and `pv_disp_scratch()` lends the block out to the dictionary
+for the duration of one inflate call. Nothing is drawn while it is lent out.
+
+**Everything from the browser crosses one queue**
+The HTTP server runs in its own task. It never touches UI state directly — a page turn from the
+phone is pushed onto a FreeRTOS queue and executed by the UI task, which owns the page table and
+the row band. The queue doubles as the memory barrier for the "which book to open" path (the path
+is written before the message is posted). The queue must exist **before** the HTTP server can
+receive a request, otherwise commands are dropped silently.
+
 ---
 
 ## Known limitations
@@ -335,6 +356,10 @@ as well.
   library, not a configuration issue). For sharp images, re-save them as **baseline** JPEG.
 - No PSRAM: the largest contiguous free block is ~80 KB, so very large or very numerous images
   may fail.
+- **EPUB reading is memory-bound.** Opening one needs a 32 KB contiguous block plus a few smaller
+  tables. With Wi-Fi up the margin is only a few KB, so a very large EPUB may fail to open (the
+  device shows an *open failed* screen). Extra chapter/entry tables are capped by design: an EPUB
+  with more than ~128 content documents keeps only the first ones.
 - The panel is a single-touch resistive screen, so **only taps are supported** — no swiping, no
   long press, no pinch.
 - Touch and panel parameters were measured on this specific board; a different board or panel may

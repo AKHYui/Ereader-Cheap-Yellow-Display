@@ -4,10 +4,12 @@
 #include "pv_config.h"
 #include "pv_disp.h"
 #include "pv_touch.h"
+#include "lcd_st7789.h"
+#include "net_remote.h"
 #include "rd_bar.h"
+#include "rd_book.h"
 #include "rd_font.h"
 #include "rd_list.h"
-#include "rd_txt.h"
 
 #include "esp_log.h"
 #include "esp_timer.h"
@@ -140,10 +142,49 @@ static void popup_row(uint16_t *row, int sy, int sel)
     rd_font_row(row, sy, (PV_SCR_W - w) / 2, POP_HINT_Y, cps, m, NUI_DIM, NUI_PANEL);
 }
 
+#define PROG_TXT_Y   124
+#define PROG_BAR_X    20
+#define PROG_BAR_W   (PV_SCR_W - PROG_BAR_X * 2)
+#define PROG_BAR_Y   164
+#define PROG_BAR_H    18
+#define PROG_NUM_Y   196
+
+static void prog_draw(int done, int total)
+{
+    char ind[24];
+    snprintf(ind, sizeof(ind), "%d/%d", done, total);
+
+    pv_disp_page_begin(NUI_BG);
+    for (int sy = 0; sy < PV_SCR_H; sy++) {
+        uint16_t *row = pv_disp_page_row(sy);
+        if (!row) continue;
+
+        uint32_t  cps[16];
+        const int n = rd_cp_from_utf8("正在解析 EPUB", cps, 16);
+        rd_font_row(row, sy, (PV_SCR_W - rd_font_width(cps, n)) / 2, PROG_TXT_Y,
+                    cps, n, NUI_FG, NUI_BG);
+
+        nui_frame_row(row, sy, PROG_BAR_X, PROG_BAR_Y, PROG_BAR_W, PROG_BAR_H,
+                      NUI_PANEL, NUI_EDGE, 2);
+        if (total > 0) {
+            const int in_w = PROG_BAR_W - 4;
+            int fill = in_w * done / total;
+            if (fill < 0) fill = 0;
+            if (fill > in_w) fill = in_w;
+            if (fill > 0 && sy >= PROG_BAR_Y + 2 && sy < PROG_BAR_Y + PROG_BAR_H - 2) {
+                nui_hspan(row, PROG_BAR_X + 2, PROG_BAR_X + 2 + fill, NUI_OK);
+            }
+        }
+
+        rd_font_ascii_mid(row, sy, PV_SCR_W / 2, PROG_NUM_Y, ind, NUI_DIM, NUI_BG);
+    }
+    pv_disp_page_end();
+}
+
 static void view_draw(int pressed, int sel)
 {
     char ind[24];
-    snprintf(ind, sizeof(ind), "%d/%d", rd_txt_page() + 1, rd_txt_pages());
+    snprintf(ind, sizeof(ind), "%d/%d", rd_book_page() + 1, rd_book_pages());
 
     pv_disp_page_begin(NUI_BG);
 
@@ -192,17 +233,17 @@ static int err_hit(int x, int y, void *ctx)
 
 static void move_page(int dir)
 {
-    const bool ok = (dir < 0) ? rd_txt_prev() : rd_txt_next();
+    const bool ok = (dir < 0) ? rd_book_prev() : rd_book_next();
     if (!ok) {
 
         ESP_LOGI(TAG, "%s", dir < 0 ? "已经是第 1 页" : "已经是最后一页");
         return;
     }
-    if (!rd_txt_load_page(&s_pg)) {
-        ESP_LOGE(TAG, "取第 %d 页失败，退回上一页", rd_txt_page() + 1);
+    if (!rd_book_load_page(&s_pg)) {
+        ESP_LOGE(TAG, "取第 %d 页失败，退回上一页", rd_book_page() + 1);
 
-        if (dir < 0) rd_txt_next(); else rd_txt_prev();
-        rd_txt_load_page(&s_pg);
+        if (dir < 0) rd_book_next(); else rd_book_prev();
+        rd_book_load_page(&s_pg);
     }
 }
 
@@ -232,6 +273,31 @@ static int view_loop(void)
 
         pv_touch_evt_t ev;
         if (!pv_touch_take(&ev)) {
+
+            rc_cmd_t rc;
+            int      rc_arg = 0;
+            if (net_remote_take(&rc, &rc_arg)) {
+
+                bool redraw = false;
+                if (rc == RC_NEXT) {
+                    move_page(+1);
+                    redraw = true;
+                } else if (rc == RC_PREV) {
+                    move_page(-1);
+                    redraw = true;
+                } else if (rc == RC_BACK) {
+                    return LOOP_BACK;
+                } else if (rc == RC_BRIGHT) {
+                    lcd_set_brightness(lcd_get_brightness() + rc_arg);
+                } else if (rc == RC_GOTO &&
+                           rd_book_goto(rc_arg) && rd_book_load_page(&s_pg)) {
+                    redraw = true;
+                }
+                if (redraw) view_draw(pressed, sel);
+
+                net_remote_sync(rd_book_file(), rd_book_page(), rd_book_pages());
+                continue;
+            }
             vTaskDelay(pdMS_TO_TICKS(20));
         } else if (!ev.down) {
 
@@ -242,7 +308,7 @@ static int view_loop(void)
                 s_pop = false;
 
                 if (h == POP_SAVE) {
-                    bm_save(rd_txt_file(), rd_txt_page());
+                    bm_save(rd_book_file(), rd_book_page());
                     s_toast = 1;
                     s_toast_t0 = now_ms();
                 } else if (h == POP_LOAD) {
@@ -276,6 +342,8 @@ static int view_loop(void)
             s_toast = 0;
             view_draw(pressed, sel);
         }
+
+        net_remote_sync(rd_book_file(), rd_book_page(), rd_book_pages());
     }
 }
 
@@ -326,33 +394,34 @@ void rd_view_run_at(const char *path, int page)
     int start = page;
 
     for (;;) {
-        if (!rd_txt_open(cur)) {
-            rd_txt_close();
+        if (!rd_book_open(cur, prog_draw)) {
+            rd_book_close();
             show_error();
             return;
         }
 
         if (start > 0) {
             int p = start;
-            if (p >= rd_txt_pages()) p = rd_txt_pages() - 1;
+            if (p >= rd_book_pages()) p = rd_book_pages() - 1;
             if (p < 0) p = 0;
-            rd_txt_goto(p);
-            ESP_LOGI(TAG, "跳到第 %d 页（共 %d 页）", p + 1, rd_txt_pages());
+            rd_book_goto(p);
+            ESP_LOGI(TAG, "跳到第 %d 页（共 %d 页）", p + 1, rd_book_pages());
         }
 
-        if (!rd_txt_load_page(&s_pg)) {
-            ESP_LOGE(TAG, "取第 %d 页失败", rd_txt_page() + 1);
-            rd_txt_close();
+        if (!rd_book_load_page(&s_pg)) {
+            ESP_LOGE(TAG, "取第 %d 页失败", rd_book_page() + 1);
+            rd_book_close();
             show_error();
             return;
         }
 
         if (view_loop() == LOOP_BACK) {
-            rd_txt_close();
+            rd_book_close();
+            net_remote_sync(NULL, 0, 0);
             return;
         }
 
-        rd_txt_close();
+        rd_book_close();
         snprintf(cur, sizeof(cur), RD_LIST_DIR "/%s", s_jump);
         start = s_jump_page;
         ESP_LOGI(TAG, "按书签打开 %s（第 %d 页）", cur, start + 1);

@@ -1,5 +1,9 @@
 #include "net_httpd.h"
 
+#include "lcd_st7789.h"
+#include "net_remote.h"
+#include "rd_list.h"
+
 #include <ctype.h>
 #include <errno.h>
 #include <dirent.h>
@@ -46,12 +50,13 @@ void net_httpd_prog(net_httpd_prog_t *out)
 static esp_err_t qs_get(httpd_req_t *r, const char *key, char *out, size_t n)
 {
     const size_t qlen = httpd_req_get_url_query_len(r);
-    if (qlen <= 0 || qlen > 256) return ESP_ERR_INVALID_ARG;
 
-    char q[260];
+    if (qlen <= 0 || qlen > 384) return ESP_ERR_INVALID_ARG;
+
+    char q[400];
     if (httpd_req_get_url_query_str(r, q, sizeof(q)) != ESP_OK) return ESP_FAIL;
 
-    char raw[192];
+    char raw[300];
     if (httpd_query_key_value(q, key, raw, sizeof(raw)) != ESP_OK) return ESP_ERR_NOT_FOUND;
 
     size_t j = 0;
@@ -297,6 +302,124 @@ static esp_err_t h_upload(httpd_req_t *r)
     return ESP_OK;
 }
 
+extern const uint8_t remote_html_start[] asm("_binary_remote_html_start");
+extern const uint8_t remote_html_end[]   asm("_binary_remote_html_end");
+
+static bool ext_is(const char *e, const char *want)
+{
+    while (*want) {
+        if ((*e | 0x20) != (*want | 0x20)) return false;
+        e++; want++;
+    }
+    return *e == 0;
+}
+
+static bool is_book_name(const char *s)
+{
+    const char *dot = strrchr(s, '.');
+    if (!dot || dot == s) return false;
+    return ext_is(dot, ".txt") || ext_is(dot, ".epub");
+}
+
+static esp_err_t h_remote(httpd_req_t *r)
+{
+    const size_t n = (size_t)(remote_html_end - remote_html_start);
+    httpd_resp_set_type(r, "text/html; charset=utf-8");
+    httpd_resp_set_hdr(r, "Cache-Control", "no-store");
+    return httpd_resp_send(r, (const char *)remote_html_start, n);
+}
+
+static esp_err_t h_books(httpd_req_t *r)
+{
+    httpd_resp_set_type(r, "application/json");
+    httpd_resp_set_hdr(r, "Cache-Control", "no-store");
+    httpd_resp_sendstr_chunk(r, "{\"books\":[");
+
+    static char esc[520];
+    static char item[560];
+
+    int n = 0;
+    DIR *d = opendir(RD_LIST_DIR);
+    if (d) {
+        struct dirent *e;
+        while ((e = readdir(d)) != NULL && n < 200) {
+            if (e->d_name[0] == '.' || !is_book_name(e->d_name)) continue;
+            json_escape(e->d_name, esc, sizeof(esc));
+            snprintf(item, sizeof(item), "%s\"%s\"", n ? "," : "", esc);
+            httpd_resp_sendstr_chunk(r, item);
+            n++;
+        }
+        closedir(d);
+    }
+    httpd_resp_sendstr_chunk(r, "]}");
+    httpd_resp_send_chunk(r, NULL, 0);
+    return ESP_OK;
+}
+
+static esp_err_t h_state(httpd_req_t *r)
+{
+    net_remote_book_t b;
+    net_remote_state(&b);
+
+    static char esc[sizeof(((net_remote_book_t *)0)->name) * 2 + 2];
+    json_escape(b.name, esc, sizeof(esc));
+
+    static char buf[384];
+    snprintf(buf, sizeof(buf),
+             "{\"name\":\"%s\",\"page\":%d,\"pages\":%d,\"bright\":%d}",
+             esc, b.pages > 0 ? b.page + 1 : 0, b.pages, lcd_get_brightness());
+
+    httpd_resp_set_type(r, "application/json");
+    httpd_resp_set_hdr(r, "Cache-Control", "no-store");
+    return httpd_resp_sendstr(r, buf);
+}
+
+static esp_err_t h_cmd(httpd_req_t *r)
+{
+    char c[16] = { 0 };
+    if (qs_get(r, "c", c, sizeof(c)) != ESP_OK) {
+        httpd_resp_send_err(r, HTTPD_400_BAD_REQUEST, "bad cmd");
+        return ESP_OK;
+    }
+
+    int  v = 0;
+    char vv[16];
+    if (qs_get(r, "v", vv, sizeof(vv)) == ESP_OK) v = atoi(vv);
+
+    rc_cmd_t cmd = RC_NONE;
+    if      (!strcmp(c, "next"))  cmd = RC_NEXT;
+    else if (!strcmp(c, "prev"))  cmd = RC_PREV;
+    else if (!strcmp(c, "goto"))  cmd = RC_GOTO;
+    else if (!strcmp(c, "light")) cmd = RC_BRIGHT;
+    else if (!strcmp(c, "back"))  cmd = RC_BACK;
+
+    const bool ok = (cmd != RC_NONE) && net_remote_post(cmd, v);
+    httpd_resp_set_type(r, "application/json");
+    return httpd_resp_sendstr(r, ok ? "{\"ok\":true}" : "{\"ok\":false}");
+}
+
+static esp_err_t h_open(httpd_req_t *r)
+{
+    static char name[NAME_MAX_LEN + 1];
+    if (qs_get(r, "name", name, sizeof(name)) != ESP_OK ||
+        !name_ok(name) || !is_book_name(name)) {
+        ESP_LOGW(TAG, "打开请求被拒（名字不合法，或不是 .txt/.epub）");
+        httpd_resp_send_err(r, HTTPD_400_BAD_REQUEST, "bad name");
+        return ESP_OK;
+    }
+
+    static char path[RD_LIST_DIR_LEN + 1 + NAME_MAX_LEN + 1];
+    snprintf(path, sizeof(path), RD_LIST_DIR "/%s", name);
+
+    if (!net_remote_set_open_path(path) || !net_remote_post(RC_OPEN, 0)) {
+        httpd_resp_send_err(r, HTTPD_500_INTERNAL_SERVER_ERROR, "busy");
+        return ESP_OK;
+    }
+    ESP_LOGI(TAG, "手机请求打开 %s", path);
+    httpd_resp_set_type(r, "application/json");
+    return httpd_resp_sendstr(r, "{\"ok\":true}");
+}
+
 esp_err_t net_httpd_start(void)
 {
     if (s_srv) return ESP_OK;
@@ -307,7 +430,8 @@ esp_err_t net_httpd_start(void)
     }
 
     httpd_config_t cfg = HTTPD_DEFAULT_CONFIG();
-    cfg.max_uri_handlers = 6;
+
+    cfg.max_uri_handlers = 12;
     cfg.max_open_sockets = 3;
     cfg.lru_purge_enable = true;
     cfg.stack_size       = 5120;
@@ -325,11 +449,22 @@ esp_err_t net_httpd_start(void)
     static const httpd_uri_t uri_list =   { .uri = "/api/list",  .method = HTTP_GET,  .handler = h_list };
     static const httpd_uri_t uri_upload = { .uri = "/upload",    .method = HTTP_POST, .handler = h_upload };
 
+    static const httpd_uri_t uri_remote = { .uri = "/r",          .method = HTTP_GET,  .handler = h_remote };
+    static const httpd_uri_t uri_books  = { .uri = "/api/books",  .method = HTTP_GET,  .handler = h_books };
+    static const httpd_uri_t uri_state  = { .uri = "/api/state",  .method = HTTP_GET,  .handler = h_state };
+    static const httpd_uri_t uri_cmd    = { .uri = "/api/cmd",    .method = HTTP_GET,  .handler = h_cmd };
+    static const httpd_uri_t uri_open   = { .uri = "/api/open",   .method = HTTP_GET,  .handler = h_open };
+
     httpd_register_uri_handler(s_srv, &uri_root);
     httpd_register_uri_handler(s_srv, &uri_index);
     httpd_register_uri_handler(s_srv, &uri_dirs);
     httpd_register_uri_handler(s_srv, &uri_list);
     httpd_register_uri_handler(s_srv, &uri_upload);
+    httpd_register_uri_handler(s_srv, &uri_remote);
+    httpd_register_uri_handler(s_srv, &uri_books);
+    httpd_register_uri_handler(s_srv, &uri_state);
+    httpd_register_uri_handler(s_srv, &uri_cmd);
+    httpd_register_uri_handler(s_srv, &uri_open);
 
     ESP_LOGI(TAG, "文件接收服务已启动：http://%s/（%s）",
              net_wifi_connected() ? net_wifi_ip() : net_wifi_ap_ip(),
@@ -339,3 +474,12 @@ esp_err_t net_httpd_start(void)
 }
 
 bool net_httpd_running(void) { return s_srv != NULL; }
+
+void net_httpd_stop(void)
+{
+    if (!s_srv) return;
+    httpd_stop(s_srv);
+    s_srv = NULL;
+    ESP_LOGW(TAG, "文件接收服务已停止（内存让给阅读）");
+    net_wifi_mem("httpd 停止后");
+}

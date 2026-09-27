@@ -25,6 +25,9 @@ static esp_err_t    s_start_rc = ESP_FAIL;
 static esp_netif_t *s_netif;
 static esp_netif_t *s_ap_netif;
 
+static esp_event_handler_instance_t s_h_wifi;
+static esp_event_handler_instance_t s_h_ip;
+
 static net_wifi_state_t s_state = NET_WIFI_OFF;
 static char             s_ssid[NET_WIFI_SSID_LEN];
 static char             s_ip[16];
@@ -229,9 +232,9 @@ esp_err_t net_wifi_start(void)
     }
 
     ESP_ERROR_CHECK(esp_event_handler_instance_register(
-        WIFI_EVENT, ESP_EVENT_ANY_ID, &on_wifi_event, NULL, NULL));
+        WIFI_EVENT, ESP_EVENT_ANY_ID, &on_wifi_event, NULL, &s_h_wifi));
     ESP_ERROR_CHECK(esp_event_handler_instance_register(
-        IP_EVENT, IP_EVENT_STA_GOT_IP, &on_ip_event, NULL, NULL));
+        IP_EVENT, IP_EVENT_STA_GOT_IP, &on_ip_event, NULL, &s_h_ip));
 
     ESP_ERROR_CHECK(esp_wifi_set_storage(WIFI_STORAGE_RAM));
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
@@ -249,6 +252,47 @@ esp_err_t net_wifi_start(void)
     return ESP_OK;
 }
 
+void net_wifi_shutdown(void)
+{
+    if (!s_tried || s_start_rc != ESP_OK) return;
+    if (net_wifi_ap_on()) net_wifi_ap_stop();
+
+    esp_wifi_disconnect();
+    esp_wifi_stop();
+    esp_wifi_deinit();
+
+    if (s_h_wifi) {
+        esp_event_handler_instance_unregister(WIFI_EVENT, ESP_EVENT_ANY_ID, s_h_wifi);
+        s_h_wifi = NULL;
+    }
+    if (s_h_ip) {
+        esp_event_handler_instance_unregister(IP_EVENT, IP_EVENT_STA_GOT_IP, s_h_ip);
+        s_h_ip = NULL;
+    }
+    if (s_netif) {
+        esp_netif_destroy_default_wifi(s_netif);
+        s_netif = NULL;
+    }
+    if (s_ap_netif) {
+        esp_netif_destroy_default_wifi(s_ap_netif);
+        s_ap_netif = NULL;
+    }
+
+    portENTER_CRITICAL(&s_mux);
+    s_ap_on      = false;
+    s_ap_clients = 0;
+    s_ap_ssid[0] = 0;
+    s_ap_ip[0]   = 0;
+    s_ssid[0]    = 0;
+    s_ip[0]      = 0;
+    portEXIT_CRITICAL(&s_mux);
+
+    s_tried    = false;
+    s_start_rc = ESP_FAIL;
+    set_state(NET_WIFI_OFF);
+    net_wifi_mem("wifi 已关闭");
+}
+
 bool net_wifi_started(void) { return s_tried && s_start_rc == ESP_OK; }
 
 net_wifi_state_t net_wifi_state(void)
@@ -260,6 +304,16 @@ net_wifi_state_t net_wifi_state(void)
 }
 
 bool net_wifi_connected(void) { return net_wifi_state() == NET_WIFI_CONNECTED; }
+
+int net_wifi_rssi(void)
+{
+
+    if (!s_tried || s_start_rc != ESP_OK) return 0;
+
+    wifi_ap_record_t ap;
+    if (esp_wifi_sta_get_ap_info(&ap) != ESP_OK) return 0;
+    return ap.rssi;
+}
 
 const char *net_wifi_state_text(void)
 {

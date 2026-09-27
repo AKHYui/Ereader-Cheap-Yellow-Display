@@ -6,6 +6,7 @@
 #include "net_ap.h"
 #include "net_menu.h"
 #include "net_recv.h"
+#include "net_remote.h"
 #include "net_wifi.h"
 #include "nui_menu.h"
 #include "nui_sec.h"
@@ -77,6 +78,8 @@ void app_main(void)
         return;
     }
     pv_touch_start();
+
+    net_remote_init();
 
 #if NET_BOOT_SELFTEST
     net_wifi_selftest();

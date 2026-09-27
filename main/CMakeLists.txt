@@ -14,17 +14,25 @@ idf_component_register(
         "nui/nui_ascii.c"
         "nui/nui_glyphs.c"
         "nui/nui_ui.c"
+        "nui/nui_led.c"
+        "nui/nui_qr.c"
         "nui/nui_menu.c"
         "nui/nui_setting.c"
+        "nui/nui_diag.c"
         "nui/nui_sec.c"
         "net/net_wifi.c"
         "net/net_httpd.c"
         "net/net_ap.c"
+        "net/net_qr.c"
+        "net/net_remote.c"
         "net/net_menu.c"
         "net/net_recv.c"
         "net/net_wlan.c"
         "reader/rd_font.c"
+        "reader/rd_walk.c"
         "reader/rd_txt.c"
+        "reader/rd_epub.c"
+        "reader/rd_book.c"
         "reader/rd_bar.c"
         "reader/rd_list.c"
         "reader/rd_view.c"
@@ -40,11 +48,13 @@ idf_component_register(
         driver
         esp_lcd
         esp_adc
+        esp_rom
         fatfs
         sdmmc
         esp_timer
         esp_driver_gpio
         esp_driver_spi
+        esp_hw_support
         nvs_flash
         esp_wifi
         esp_netif
@@ -62,6 +72,8 @@ option(NET_RECV_WEBPAGE "把文件接收的上传网页编进固件" ON)
 if(NET_RECV_WEBPAGE)
     target_add_binary_data(${COMPONENT_LIB}
         "${CMAKE_CURRENT_LIST_DIR}/net/www/index.html" BINARY)
+    target_add_binary_data(${COMPONENT_LIB}
+        "${CMAKE_CURRENT_LIST_DIR}/net/www/remote.html" BINARY)
 endif()
 
 option(RD_FONT_BLOB "把阅读页字库编进固件" ON)

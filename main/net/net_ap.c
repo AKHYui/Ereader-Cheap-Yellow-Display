@@ -1,6 +1,7 @@
 #include "net_ap.h"
 
 #include "net_httpd.h"
+#include "net_qr.h"
 #include "net_wifi.h"
 #include "nui_ui.h"
 #include "pv_config.h"
@@ -21,11 +22,12 @@ static const char *TAG = PV_TAG;
 
 #define FOOT_Y      272
 #define FOOT_H       48
-#define BTN_W        76
+#define BTN_W        72
+#define BTN_GAP       4
 
 #define POLL_MS     300
 
-enum { AH_NONE = 0, AH_TOGGLE = 1, AH_BACK = 2 };
+enum { AH_NONE = 0, AH_TOGGLE = 1, AH_QR = 2, AH_BACK = 3 };
 
 typedef struct {
     bool on;
@@ -42,7 +44,7 @@ static ap_state_t s_shown;
 
 static int64_t now_ms(void) { return esp_timer_get_time() / 1000; }
 
-static int btn_x(int which) { return (which == AH_TOGGLE) ? 34 : 130; }
+static int btn_x(int which) { return 8 + (which - AH_TOGGLE) * (BTN_W + BTN_GAP); }
 
 static void ap_draw(int pressed, const ap_state_t *st)
 {
@@ -89,6 +91,8 @@ static void ap_draw(int pressed, const ap_state_t *st)
 
         nui_button_row(row, sy, btn_x(AH_TOGGLE), FOOT_Y, BTN_W, FOOT_H,
                        st->on ? "关闭" : "开启", pressed == AH_TOGGLE);
+        nui_button_row(row, sy, btn_x(AH_QR), FOOT_Y, BTN_W, FOOT_H,
+                       "扫码", pressed == AH_QR);
         nui_button_row(row, sy, btn_x(AH_BACK), FOOT_Y, BTN_W, FOOT_H,
                        "返回", pressed == AH_BACK);
     }
@@ -218,6 +222,16 @@ void net_ap_run(void)
 
         if (h == AH_BACK) {
             back = true;
+            continue;
+        }
+
+        if (h == AH_QR) {
+
+            net_qr_run();
+            read_state(&s_shown);
+            ensure_service(&s_shown);
+            s_shown.failed = failed;
+            ap_draw(pressed, &s_shown);
             continue;
         }
 
