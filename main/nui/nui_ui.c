@@ -1,6 +1,7 @@
 #include "nui_ui.h"
 #include "nui_ascii.h"
 #include "nui_glyphs.h"
+#include "rd_font.h"
 
 #include "esp_log.h"
 
@@ -347,6 +348,19 @@ void nui_ascii2x_row(uint16_t *row, int sy, int x, int y_top, const char *s,
 int nui_ascii_w1(const char *s)
 {
     return s ? (int)strlen(s) * nui_ascii_w() : 0;
+}
+
+void nui_hint_row(uint16_t *row, int sy, int y_top, const char *s,
+                  uint16_t fg, uint16_t bg)
+{
+
+    static uint32_t cps[32];
+
+    if (!row || !s || !s[0]) return;
+    const int n = rd_cp_from_utf8(s, cps, 32);
+    if (n <= 0) return;
+    rd_font_row(row, sy, (PV_SCR_W - rd_font_width(cps, n)) / 2, y_top,
+                cps, n, fg, bg);
 }
 
 void nui_ascii_row(uint16_t *row, int sy, int x, int y_top, const char *s,

@@ -7,6 +7,7 @@
 #include "driver/gpio.h"
 #include "esp_log.h"
 #include "esp_rom_sys.h"
+#include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/queue.h"
@@ -29,6 +30,11 @@ static const char *TAG = PV_TAG;
 static QueueHandle_t s_q;
 static volatile bool s_ready   = false;
 static volatile bool s_pressed = false;
+
+static volatile int64_t s_last_act_ms = 0;
+
+static volatile bool    s_ignore;
+static volatile int64_t s_ignore_t0;
 
 static uint8_t  s_confirm_cnt  = 0;
 static uint32_t s_idle_cnt     = 0;
@@ -208,7 +214,17 @@ static void pv_touch_task(void *arg)
                 }
 
                 const pv_touch_evt_t ev = { x, y, rx, ry, z_raw, now };
-                if (s_q) {
+
+                s_last_act_ms = esp_timer_get_time() / 1000;
+
+                const bool eating = s_ignore;
+                if (!now) s_ignore = false;
+                if (s_ignore &&
+                    esp_timer_get_time() / 1000 - s_ignore_t0 > 2000) {
+                    s_ignore = false;
+                }
+
+                if (!eating && s_q) {
 
                     if (xQueueSend(s_q, &ev, 0) != pdTRUE) {
                         pv_touch_evt_t drop;
@@ -286,4 +302,25 @@ int pv_touch_hit(int (*hit)(int x, int y, void *ctx), void *ctx)
 bool pv_touch_is_down(void)
 {
     return s_pressed;
+}
+
+void pv_touch_flush(void)
+{
+    if (!s_q) return;
+    pv_touch_evt_t drop;
+
+    while (xQueueReceive(s_q, &drop, 0) == pdTRUE) {
+    }
+}
+
+void pv_touch_ignore_until_release(void)
+{
+    pv_touch_flush();
+    s_ignore_t0 = esp_timer_get_time() / 1000;
+    s_ignore    = true;
+}
+
+int64_t pv_touch_last_ms(void)
+{
+    return s_last_act_ms;
 }

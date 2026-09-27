@@ -57,6 +57,9 @@ void nui_ascii2x_row(uint16_t *row, int sy, int x, int y_top, const char *s,
 
 int  nui_ascii_w1(const char *s);
 
+void nui_hint_row(uint16_t *row, int sy, int y_top, const char *s,
+                  uint16_t fg, uint16_t bg);
+
 void nui_ascii_row(uint16_t *row, int sy, int x, int y_top, const char *s,
                    uint16_t fg);
 

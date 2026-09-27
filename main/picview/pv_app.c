@@ -1,6 +1,7 @@
 #include "pv_app.h"
 #include "pv_config.h"
 #include "pv_disp.h"
+#include "nui_sleep.h"
 #include "pv_scan.h"
 #include "pv_touch.h"
 #include "pv_jpeg.h"
@@ -371,6 +372,12 @@ void pv_app_run(void)
 
     for (;;) {
         bool go_home = false;
+
+        if (nui_sleep_poll()) {
+            if (nui_sleep_test_should_back()) return;
+            show_index(idx);
+            continue;
+        }
 
         if (pv_touch_is_down()) {
             int h = pv_touch_hit(bar_hit, NULL);

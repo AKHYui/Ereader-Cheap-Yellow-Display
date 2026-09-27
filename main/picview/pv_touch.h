@@ -1,6 +1,7 @@
 #pragma once
 
 #include <stdbool.h>
+#include <stdint.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -25,6 +26,12 @@ bool pv_touch_last(int *x, int *y);
 int pv_touch_hit(int (*hit)(int x, int y, void *ctx), void *ctx);
 
 bool pv_touch_is_down(void);
+
+void pv_touch_flush(void);
+
+void pv_touch_ignore_until_release(void);
+
+int64_t pv_touch_last_ms(void);
 
 #ifdef __cplusplus
 }

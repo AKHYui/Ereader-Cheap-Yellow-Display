@@ -11,6 +11,7 @@
 #include "nui_menu.h"
 #include "nui_sec.h"
 #include "nui_setting.h"
+#include "nui_sleep.h"
 #include "pv_app.h"
 #include "pv_disp.h"
 #include "pv_jpeg.h"
@@ -80,6 +81,8 @@ void app_main(void)
     pv_touch_start();
 
     net_remote_init();
+
+    nui_sleep_init();
 
 #if NET_BOOT_SELFTEST
     net_wifi_selftest();

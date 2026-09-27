@@ -28,6 +28,7 @@ panel. This board has no PSRAM and its largest contiguous free block is only ~80
 | **Images** | Browsing of JPEG / BMP under `/sdcard/images`; aspect-fit, never stretched; 1080p images work; **delete** the current image (with confirmation) |
 | **Network** | Join a WLAN (scan, on-screen password keyboard, status); **AP mode** — the board hosts its own hotspot, so no router is needed at all; browser upload page (target-directory picker + file list); **phone remote control** — open `http://<board-ip>/r` and page / jump / set brightness from the phone; **on-screen QR codes** for the hotspot and for that URL |
 | **Settings** | **Device security**: 6-digit boot password (asked on every boot once enabled); **brightness**: 1–100% via PWM; **device diagnostics** (heap, largest block, stack, NVS, SD, RSSI, uptime, reset reason — refreshed every second); **RGB status LED** (blinks on an action, can be switched off); forget network |
+| **Screensaver** | Idle-triggered: **1 / 5 / 10 / 30 minutes or never**, two styles. **Clock** — connects to Wi-Fi, syncs time over SNTP and shows `YYYY-MM-DD  HH:MM:SS` centred on a black screen; **pixel whale girl** — an animated 120×120 sprite. If the time cannot be fetched (no saved network / cannot connect / not enough free heap) it **falls back to the whale girl** automatically. Touching the screen only wakes it up — it never triggers a button |
 | **Filesystem** | `images` / `novels` are created automatically when a card is inserted — a blank card works immediately |
 
 ## Screenshots
@@ -55,6 +56,10 @@ panel. This board has no PSRAM and its largest contiguous free block is only ~80
 ### Phone remote control
 
 ![QR code page / remote-control page / device diagnostics](screenshots/06-remote.png)
+
+### Screensaver
+
+![Screensaver settings / clock screensaver / pixel whale girl](screenshots/07-screensaver.png)
 
 ---
 
@@ -282,7 +287,7 @@ settings page already means you passed the boot check).
 └── main/
     ├── main.c                  entry point + shell (main menu -> dispatch -> back to menu)
     ├── drivers/                display / touch / SD card / board definitions
-    ├── nui/                    UI shell: menu, settings, security, diagnostics, LED, QR encoder, drawing layer, fonts
+    ├── nui/                    UI shell: menu, settings, security, diagnostics, LED, screensaver + sprite, QR encoder, drawing layer, fonts
     ├── picview/                image viewer (decoder + row-band display + touch + scanning)
     ├── reader/                 reader (TXT + EPUB pagination, 16px fonts, button bar, bookmarks)
     ├── net/                    networking (Wi-Fi, HTTP upload, AP mode, phone remote, QR page, screens)

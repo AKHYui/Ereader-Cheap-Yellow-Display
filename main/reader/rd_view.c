@@ -6,6 +6,7 @@
 #include "pv_touch.h"
 #include "lcd_st7789.h"
 #include "net_remote.h"
+#include "nui_sleep.h"
 #include "rd_bar.h"
 #include "rd_book.h"
 #include "rd_font.h"
@@ -261,6 +262,14 @@ static int view_loop(void)
 
     for (;;) {
 
+        if (nui_sleep_poll()) {
+
+            if (nui_sleep_test_should_back()) return LOOP_BACK;
+            pressed = 0;
+            view_draw(pressed, sel);
+            continue;
+        }
+
         if (pv_touch_is_down()) {
             const int h = pv_touch_hit(view_hit, NULL);
             if (s_pop) {
@@ -279,6 +288,8 @@ static int view_loop(void)
             if (net_remote_take(&rc, &rc_arg)) {
 
                 bool redraw = false;
+
+                nui_sleep_keep_awake();
                 if (rc == RC_NEXT) {
                     move_page(+1);
                     redraw = true;

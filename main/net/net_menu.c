@@ -6,6 +6,7 @@
 #include "net_wifi.h"
 #include "net_wlan.h"
 #include "nui_ui.h"
+#include "nui_sleep.h"
 #include "pv_config.h"
 #include "pv_disp.h"
 #include "pv_touch.h"
@@ -86,6 +87,12 @@ void net_menu_run(void)
     ESP_LOGI(TAG, "网络菜单就绪（WLAN / AP模式 / 文件接收 / 网页遥控 / 返回）");
 
     for (;;) {
+
+        if (nui_sleep_poll()) {
+            pressed = -1;
+            net_menu_draw(pressed);
+            continue;
+        }
 
         if (pv_touch_is_down()) {
             const int h   = pv_touch_hit(net_hit, NULL);

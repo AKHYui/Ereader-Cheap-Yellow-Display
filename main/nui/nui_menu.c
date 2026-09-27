@@ -1,5 +1,6 @@
 #include "nui_menu.h"
 #include "nui_ui.h"
+#include "nui_sleep.h"
 
 #include "pv_config.h"
 #include "pv_disp.h"
@@ -164,6 +165,12 @@ nui_action_t nui_menu_run(void)
              TILE_W, TILE_H, GRID_GAP);
 
     for (;;) {
+
+        if (nui_sleep_poll()) {
+            pressed = -1;
+            menu_draw(pressed);
+            continue;
+        }
 
         if (pv_touch_is_down()) {
             const int t = pv_touch_hit(tile_hit, NULL);

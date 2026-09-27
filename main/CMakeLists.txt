@@ -15,6 +15,8 @@ idf_component_register(
         "nui/nui_glyphs.c"
         "nui/nui_ui.c"
         "nui/nui_led.c"
+        "nui/nui_whale.c"
+        "nui/nui_sleep.c"
         "nui/nui_qr.c"
         "nui/nui_menu.c"
         "nui/nui_setting.c"

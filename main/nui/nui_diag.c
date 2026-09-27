@@ -2,6 +2,7 @@
 
 #include "net_wifi.h"
 #include "nui_ui.h"
+#include "nui_sleep.h"
 #include "pv_config.h"
 #include "pv_disp.h"
 #include "pv_touch.h"
@@ -187,6 +188,12 @@ void nui_diag_run(void)
     int64_t last = esp_timer_get_time() / 1000;
 
     for (;;) {
+
+        if (nui_sleep_poll()) {
+            diag_draw();
+            continue;
+        }
+
         const int64_t t = esp_timer_get_time() / 1000;
         if (t - last >= REFRESH_MS) {
             last = t;

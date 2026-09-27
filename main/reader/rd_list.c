@@ -1,6 +1,7 @@
 #include "rd_list.h"
 
 #include "nui_ui.h"
+#include "nui_sleep.h"
 #include "pv_config.h"
 #include "pv_disp.h"
 #include "pv_touch.h"
@@ -206,6 +207,12 @@ void rd_list_run(void)
     list_draw(pressed);
 
     while (!back) {
+
+        if (nui_sleep_poll()) {
+            pressed = 0;
+            list_draw(pressed);
+            continue;
+        }
 
         if (pv_touch_is_down()) {
             const int h = pv_touch_hit(list_hit, NULL);
